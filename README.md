@@ -12,6 +12,10 @@ Personal userscripts for local use.
 | File | Site | What it does |
 |---|---|---|
 | [`nodeseek-checkin.user.js`](nodeseek-checkin.user.js) | [nodeseek.com](https://www.nodeseek.com/) | Daily check-in while logged in |
+| [`linuxdo-browse.user.js`](linuxdo-browse.user.js) | [linux.do](https://linux.do/) | Browse latest topics; optional likes (cap 0 = off) |
+| [`expireddomains-ingest.user.js`](expireddomains-ingest.user.js) | [member.expireddomains.net](https://member.expireddomains.net/) | Dump the listing table to a local URL you set |
+
+linux.do starts paused. Stay time, topic count, and like cap are in the page panel. expireddomains sends nothing until you set the URL.
 
 ## License
 
