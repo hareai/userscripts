@@ -13,9 +13,9 @@
 |---|---|---|
 | [`nodeseek-checkin.user.js`](nodeseek-checkin.user.js) | [nodeseek.com](https://www.nodeseek.com/) | 已登录时每日签到 |
 | [`linuxdo-browse.user.js`](linuxdo-browse.user.js) | [linux.do](https://linux.do/) | 逛最新帖；可选点赞（上限 0 = 关） |
-| [`expireddomains-ingest.user.js`](expireddomains-ingest.user.js) | [member.expireddomains.net](https://member.expireddomains.net/) | 把列表页抽到你填的本地地址 |
+| [`expireddomains-ingest.user.js`](expireddomains-ingest.user.js) | [member.expireddomains.net](https://member.expireddomains.net/) | 当前页依次跑保存搜索（各 5 页），抽到你填的本地地址 |
 
-linux.do 默认暂停。停留、篇数、点赞上限在页内面板改。expireddomains 没填 URL 不会发送。
+linux.do 默认暂停。停留、篇数、点赞上限在页内面板改。expireddomains 没填 URL 不会发送。默认 5 页（每页 200 条）。
 
 ## 许可证
 
