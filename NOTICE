@@ -1,0 +1,9 @@
+nodeseek-checkin.user.js is derived from:
+
+  NodeSeekX
+  https://github.com/NodeSeekX/userscript
+  src/features/signIn.js
+  License: GPL-3.0
+
+The original project is a forum toolbox. This file keeps only the
+daily attendance POST. Modifications are also licensed GPL-3.0-or-later.
