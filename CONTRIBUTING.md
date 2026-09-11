@@ -8,7 +8,7 @@ main (protected)
   → squash merge
 ```
 
-Do not commit on `main`. Do not publish these scripts to Greasy Fork.
+Do not commit on `main`. These are personal local scripts.
 
 Commit format: `type(scope): imperative summary`.
 Allowed types: `feat` `fix` `refactor` `docs` `test` `chore`.

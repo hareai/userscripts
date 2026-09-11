@@ -7,7 +7,7 @@ Binding for agents in this repository.
 - Read this file, README, CONTRIBUTING, `git status`.
 - Work on a topic branch. Do not commit to `main`.
 - Do not invent site lists, cadence, like caps, or check-in hours.
-- Do not add Greasy Fork / Tampermonkey store publishing.
+- These are personal local scripts. Do not add store publishing.
 
 ## During editing
 
