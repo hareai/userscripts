@@ -3,3 +3,5 @@
 node_modules/
 *.crx
 *.pem
+extension/config.yaml
+config.yaml

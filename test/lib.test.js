@@ -245,6 +245,151 @@ test("notify adapter: loopback webhook URL and HMAC", async () => {
   assert.equal(typeof notify.getAdapter("hermes"), "function");
 });
 
+test("notify adapter registry: hermes default, telegram optional, unknown fails closed", async () => {
+  assert.equal(Array.from(notify.ADAPTERS).join(","), "hermes,telegram");
+  assert.equal(notify.DEFAULT_ADAPTER, "hermes");
+  assert.equal(notify.resolveAdapter("").name, "hermes");
+  assert.equal(notify.resolveAdapter("hermes").ok, true);
+  assert.equal(notify.resolveAdapter("telegram").ok, true);
+  assert.equal(notify.resolveAdapter("nope").ok, false);
+  assert.equal(notify.getAdapter("nope"), undefined);
+  assert.equal(typeof notify.getAdapter("telegram"), "function");
+  const fakeToken = "12345:AAAAAAAAAAAAAAAAAAAA";
+  assert.equal(notify.telegramBotToken(fakeToken), fakeToken);
+  assert.equal(notify.telegramBotToken("not-a-token"), "");
+  assert.equal(notify.telegramChatId("123456789"), "123456789");
+  assert.equal(notify.telegramChatId("-1001234567890"), "-1001234567890");
+  assert.equal(notify.telegramChatId("abc"), "");
+  assert.equal(
+    notify.telegramSendUrl(fakeToken),
+    "https://api.telegram.org/bot" + fakeToken + "/sendMessage",
+  );
+  assert.equal(notify.validateSettings({ notifyAdapter: "hermes" }).ok, true);
+  assert.equal(notify.validateSettings({ notifyAdapter: "nope" }).ok, false);
+  assert.equal(
+    notify.validateSettings({ notifyAdapter: "hermes", notifyUrl: "http://example.com/webhooks/x" }).ok,
+    false,
+  );
+  assert.equal(notify.validateSettings({ notifyAdapter: "telegram", telegramBotToken: fakeToken, telegramChatId: "1" }).ok, false);
+  assert.equal(
+    notify.validateSettings({ notifyAdapter: "telegram", telegramBotToken: fakeToken, telegramChatId: "123456789" }).ok,
+    true,
+  );
+  assert.equal(notify.formatText({ site: "linux.do", kind: "login-lost", text: "gone" }), "linux.do login-lost\ngone");
+  await assert.rejects(
+    () => notify.sendAlert({ notifyAdapter: "nope" }, { site: "linux.do", kind: "login-lost", text: "x" }),
+    /unknown notify adapter/,
+  );
+
+  const calls = [];
+  const env = sandbox();
+  env.fetch = async (url, opts) => {
+    calls.push({ url: String(url), body: String(opts && opts.body) });
+    return {
+      status: 200,
+      text: async () => JSON.stringify({ ok: true, result: { message_id: 1 } }),
+    };
+  };
+  loadLib("ingest-url.js", env);
+  const withFetch = loadLib("notify.js", env);
+  const sent = await withFetch.sendAlert(
+    { notifyAdapter: "telegram", telegramBotToken: fakeToken, telegramChatId: "123456789" },
+    { site: "linux.do", kind: "login-lost", text: "gone" },
+  );
+  assert.equal(sent.adapter, "telegram");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://api.telegram.org/bot" + fakeToken + "/sendMessage");
+  assert.match(calls[0].body, /"chat_id":"123456789"/);
+  assert.match(calls[0].body, /linux\.do login-lost/);
+});
+
+test("config.yaml is the notify/ingest source of truth", () => {
+  const cfg = loadLib("config.js");
+  const doc = cfg.parseYaml(`
+notify:
+  adapter: telegram
+  hermes:
+    url: http://127.0.0.1:8644/webhooks/userscripts-alerts
+    secret: "hook-secret"
+  telegram:
+    bot_token: "12345:AAAAAAAAAAAAAAAAAAAA"
+    chat_id: "123456789"
+ingest:
+  url: http://127.0.0.1:8787/internal/ingest
+  token: "scout"
+linuxdo:
+  enabled: true
+  stay_sec: 30
+  gap_sec: 10
+  sessions_per_day: 2
+  topics_per_session: 1
+  like_cap: 1
+  like_min: 3
+  window_start_hour: 9
+  window_end_hour: 22
+nodeseek:
+  enabled: false
+  random: false
+expireddomains:
+  enabled: true
+  pages: 3
+  gap_sec: 4
+  saved_searches:
+    - 653083
+    - 通用域名48d
+# comment
+`);
+  const s = cfg.settingsFromDoc(doc);
+  assert.equal(s.notifyAdapter, "telegram");
+  assert.equal(s.notifyUrl, "http://127.0.0.1:8644/webhooks/userscripts-alerts");
+  assert.equal(s.notifySecret, "hook-secret");
+  assert.equal(s.telegramBotToken, "12345:AAAAAAAAAAAAAAAAAAAA");
+  assert.equal(s.telegramChatId, "123456789");
+  assert.equal(s.ingestUrl, "http://127.0.0.1:8787/internal/ingest");
+  assert.equal(s.ingestToken, "scout");
+  assert.equal(s.linuxdo.staySec, 30);
+  assert.equal(s.linuxdo.sessionsPerDay, 2);
+  assert.equal(s.linuxdo.likeCap, 1);
+  assert.equal(s.linuxdo.windowStartHour, 9);
+  assert.equal(s.nodeseek.enabled, false);
+  assert.equal(s.nodeseek.random, false);
+  assert.equal(s.expireddomains.pages, 3);
+  assert.equal(s.expireddomains.gapSec, 4);
+  assert.equal(s.expireddomains.savedSearches.join(","), "653083,通用域名48d");
+  const empty = cfg.settingsFromDoc({});
+  assert.equal(empty.linuxdo.sessionsPerDay, 3);
+  assert.equal(empty.linuxdo.likeCap, 2);
+  assert.equal(empty.nodeseek.enabled, true);
+  assert.equal(empty.expireddomains.pages, 5);
+  const example = cfg.parseYaml(
+    fs.readFileSync(path.join(__dirname, "..", "config.example.yaml"), "utf8"),
+  );
+  const fromExample = cfg.settingsFromDoc(example);
+  assert.equal(fromExample.notifyAdapter, "hermes");
+  assert.equal(fromExample.telegramBotToken, "");
+  assert.equal(fromExample.notifySecret, "");
+  assert.equal(fromExample.linuxdo.sessionsPerDay, 3);
+  assert.equal(fromExample.linuxdo.likeCap, 2);
+  assert.equal(fromExample.nodeseek.random, true);
+  assert.equal(fromExample.expireddomains.pages, 5);
+  const pub = cfg.publicSettings(s);
+  assert.equal(pub.notifySecret, undefined);
+  assert.equal(pub.telegramBotToken, undefined);
+  assert.equal(pub.linuxdo.likeCap, 1);
+  const bg = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+  assert.match(bg, /config\.yaml/);
+  assert.match(bg, /UsConfig/);
+  assert.match(bg, /public-config/);
+  const opt = fs.readFileSync(path.join(__dirname, "..", "extension", "options.js"), "utf8");
+  assert.equal(opt.includes("chrome.storage.local.set"), false);
+  const linuxdoContent = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "linuxdo.js"), "utf8");
+  assert.equal(linuxdoContent.includes("linuxdo.settings"), false);
+  assert.equal(linuxdoContent.includes("saveSettings"), false);
+  const ed = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "expireddomains.js"), "utf8");
+  assert.equal(ed.includes("ed.settings"), false);
+  assert.equal(ed.includes("localStorage"), false);
+});
+
 test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"),
@@ -254,6 +399,7 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   assert.deepEqual(manifest.permissions, ["storage", "alarms"]);
   assert.ok(manifest.host_permissions.includes("https://linux.do/*"));
   assert.ok(manifest.host_permissions.includes("https://www.nodeseek.com/*"));
+  assert.ok(manifest.host_permissions.includes("https://api.telegram.org/*"));
   for (const p of manifest.host_permissions) {
     assert.equal(p.includes("localhost"), false);
   }
@@ -282,6 +428,7 @@ test("content scripts never mention secrets", () => {
     const text = fs.readFileSync(path.join(dir, name), "utf8");
     assert.equal(text.includes("ingestToken"), false, name);
     assert.equal(text.includes("notifySecret"), false, name);
+    assert.equal(text.includes("telegramBotToken"), false, name);
     assert.equal(text.includes("Authorization"), false, name);
     assert.equal(text.includes("Bearer"), false, name);
   }

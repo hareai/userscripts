@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "userscripts",
-  "version": "1.3.1",
+  "version": "1.5.0",
   "description": "Personal local jobs for linux.do, NodeSeek, and ExpiredDomains.",
   "homepage_url": "https://github.com/hareai/userscripts",
   "icons": {
@@ -23,29 +23,53 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage", "alarms"],
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
   "host_permissions": [
     "https://linux.do/*",
     "https://www.nodeseek.com/*",
     "http://127.0.0.1/*",
     "http://[::1]/*",
     "https://127.0.0.1/*",
-    "https://[::1]/*"
+    "https://[::1]/*",
+    "https://api.telegram.org/*"
   ],
   "content_scripts": [
     {
-      "matches": ["https://linux.do/*"],
-      "js": ["lib/beijing-day.js", "lib/linuxdo.js", "content/linuxdo.js"],
+      "matches": [
+        "https://linux.do/*"
+      ],
+      "js": [
+        "lib/beijing-day.js",
+        "lib/linuxdo.js",
+        "lib/config.js",
+        "content/linuxdo.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.nodeseek.com/*"],
-      "js": ["lib/beijing-day.js", "lib/nodeseek.js", "content/nodeseek.js"],
+      "matches": [
+        "https://www.nodeseek.com/*"
+      ],
+      "js": [
+        "lib/beijing-day.js",
+        "lib/nodeseek.js",
+        "lib/config.js",
+        "content/nodeseek.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://member.expireddomains.net/*"],
-      "js": ["lib/listings.js", "content/expireddomains.js"],
+      "matches": [
+        "https://member.expireddomains.net/*"
+      ],
+      "js": [
+        "lib/listings.js",
+        "lib/config.js",
+        "content/expireddomains.js"
+      ],
       "run_at": "document_idle"
     }
   ]

@@ -14,6 +14,15 @@
 
   const KEY = "nodeseek.last-bj";
 
+  function publicConfig() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "public-config" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(res && res.ok ? res.settings : null);
+      });
+    });
+  }
+
   function sendAlert(kind, text) {
     chrome.runtime.sendMessage({ type: "alert", site: "nodeseek.com", kind, text }, () => {
       void chrome.runtime.lastError;
@@ -55,7 +64,7 @@
       jobDone();
       return;
     }
-    const random = true;
+    const random = (await publicConfig())?.nodeseek?.random !== false;
     try {
       const r = await fetch("/api/attendance?random=" + random, {
         method: "POST",
