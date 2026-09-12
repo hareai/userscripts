@@ -16,7 +16,7 @@ One unpacked Chrome/Chromium extension for local use.
 | [nodeseek.com](https://www.nodeseek.com/) | Daily check-in while logged in |
 | [member.expireddomains.net](https://member.expireddomains.net/) | Run saved searches in this tab (5 pages each) and POST rows to a local URL |
 
-Stay time and caps are in the page panel. Alerts and ingest POST only to `127.0.0.1` or `::1`. The notify adapter currently talks to a local Hermes webhook (`X-Hub-Signature-256`).
+Stay time and caps are in the page panel. Alerts and ingest POST only to `127.0.0.1` or `::1`. The notify adapter currently talks to a local Hermes webhook (`X-Hub-Signature-256`). Jobs run one at a time; a timeout or notify failure is retried, then alerted.
 
 The older `.user.js` files are still here if you prefer a userscript manager.
 

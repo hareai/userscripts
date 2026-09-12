@@ -18,12 +18,44 @@
     });
   }
 
+  function jobDone() {
+    chrome.runtime.sendMessage({ type: "job-done", job: "nodeseek" }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
+  function jobHold() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "job-hold", job: "nodeseek" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(Boolean(res && res.ok));
+      });
+    });
+  }
+
+  function jobStart() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "job-start", job: "nodeseek" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(Boolean(res && res.ok && res.result && res.result.ok));
+      });
+    });
+  }
+
   async function checkin() {
+    if (!(await jobHold())) {
+      if (!(await jobStart())) return;
+      if (!(await jobHold())) return;
+    }
     const day = UsDay.beijingDay();
     const stored = await chrome.storage.local.get({ [KEY]: "" });
-    if (stored[KEY] === day) return;
+    if (stored[KEY] === day) {
+      jobDone();
+      return;
+    }
     if (!UsNodeseek.loggedIn(document)) {
       sendAlert("login-lost", "nodeseek.com login is gone — sign in, then reload");
+      jobDone();
       return;
     }
     const random = true;
@@ -47,6 +79,8 @@
       }
     } catch (e) {
       sendAlert("checkin-failed", "nodeseek check-in error: " + String(e.message || e).slice(0, 80));
+    } finally {
+      jobDone();
     }
   }
 

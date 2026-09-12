@@ -1,6 +1,12 @@
-/* global UsIngest, UsNotify, UsSchedule, UsDay */
+/* global UsIngest, UsNotify, UsSchedule, UsDay, UsJobs */
 
-importScripts("lib/ingest-url.js", "lib/notify.js", "lib/schedule.js", "lib/beijing-day.js");
+importScripts(
+  "lib/ingest-url.js",
+  "lib/notify.js",
+  "lib/schedule.js",
+  "lib/beijing-day.js",
+  "lib/jobs.js",
+);
 
 const DEFAULTS = {
   ingestUrl: "",
@@ -14,6 +20,39 @@ const LINUXDO_SETTINGS = "linuxdo.settings";
 const LINUXDO_DAY = "linuxdo.day";
 const NODESEEK_LAST = "nodeseek.last-bj";
 const ALERTS_KEY = "alerts.sent";
+const ALERTS_QUEUE = "alerts.queue";
+const JOB_LOCK = "jobs.lock";
+const JOB_QUEUE = "jobs.queue";
+const JOB_PLAN_DAY = "jobs.planDay";
+const SITE_BY_JOB = {
+  linuxdo: "linux.do",
+  nodeseek: "nodeseek.com",
+  expireddomains: "expireddomains",
+};
+const JOB_BY_HOST = {
+  "linux.do": "linuxdo",
+  "www.nodeseek.com": "nodeseek",
+  "member.expireddomains.net": "expireddomains",
+};
+
+let jobChain = Promise.resolve();
+let jobDepth = 0;
+function serialized(fn) {
+  if (jobDepth > 0) return fn();
+  const run = jobChain.then(async () => {
+    jobDepth += 1;
+    try {
+      return await fn();
+    } finally {
+      jobDepth -= 1;
+    }
+  });
+  jobChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 async function loadSettings() {
   const stored = await chrome.storage.local.get(DEFAULTS);
@@ -49,31 +88,96 @@ async function postListings(listings) {
   }
 }
 
-async function alreadySent(site, kind, day) {
-  const key = day + ":" + site + ":" + kind;
+async function alreadySent(alert, extra) {
+  const key = UsJobs.alertDedupeKey({ ...alert, ...(extra || {}) });
+  if (!key) return false;
   const stored = await chrome.storage.local.get({ [ALERTS_KEY]: {} });
   const map = stored[ALERTS_KEY] || {};
   return Boolean(map[key]);
 }
 
-async function markSent(site, kind, day) {
-  const key = day + ":" + site + ":" + kind;
+async function markSent(alert, extra) {
+  const key = UsJobs.alertDedupeKey({ ...alert, ...(extra || {}) });
+  if (!key) return;
   const stored = await chrome.storage.local.get({ [ALERTS_KEY]: {} });
   const map = { ...(stored[ALERTS_KEY] || {}), [key]: Date.now() };
   await chrome.storage.local.set({ [ALERTS_KEY]: map });
 }
 
+async function enqueueAlert(alert, extra, err) {
+  const stored = await chrome.storage.local.get({ [ALERTS_QUEUE]: [] });
+  const queue = Array.isArray(stored[ALERTS_QUEUE]) ? stored[ALERTS_QUEUE].slice() : [];
+  queue.push({
+    alert,
+    extra: extra || {},
+    attempts: 0,
+    nextAt: Date.now() + UsJobs.notifyRetryDelay(0),
+    lastError: String(err || "").slice(0, 120),
+  });
+  await chrome.storage.local.set({ [ALERTS_QUEUE]: queue });
+  chrome.alarms.create("notify-retry", { when: Date.now() + UsJobs.notifyRetryDelay(0) });
+}
+
+async function drainNotifyQueue() {
+  const now = Date.now();
+  const stored = await chrome.storage.local.get({ [ALERTS_QUEUE]: [] });
+  const queue = Array.isArray(stored[ALERTS_QUEUE]) ? stored[ALERTS_QUEUE] : [];
+  if (!queue.length) return { sent: 0, left: 0 };
+  const rest = [];
+  let sent = 0;
+  const settings = await loadSettings();
+  for (const item of queue) {
+    if (!item || !item.alert) continue;
+    if (Number(item.nextAt) > now) {
+      rest.push(item);
+      continue;
+    }
+    try {
+      await UsNotify.sendAlert(settings, item.alert);
+      await markSent(item.alert, item.extra);
+      sent += 1;
+    } catch (e) {
+      const attempts = Number(item.attempts) + 1;
+      rest.push({
+        alert: item.alert,
+        extra: item.extra || {},
+        attempts,
+        nextAt: now + UsJobs.notifyRetryDelay(attempts),
+        lastError: String(e.message || e).slice(0, 120),
+      });
+    }
+  }
+  await chrome.storage.local.set({ [ALERTS_QUEUE]: rest });
+  if (rest.length) {
+    const next = Math.min(...rest.map((i) => Number(i.nextAt) || now + 60000));
+    chrome.alarms.create("notify-retry", { when: Math.max(next, now + 5000) });
+  } else {
+    await chrome.alarms.clear("notify-retry");
+  }
+  return { sent, left: rest.length };
+}
+
 async function handleAlert(msg) {
   const day = UsDay.beijingDay();
+  const extra = { token: msg && msg.token, job: msg && msg.job };
   const alert = UsNotify.sanitizeAlert({ ...msg, day });
   if (!alert) throw new Error("invalid alert");
-  if (await alreadySent(alert.site, alert.kind, day)) {
+  if (await alreadySent(alert, extra)) {
     return { ok: true, deduped: true };
   }
   const s = await loadSettings();
-  await UsNotify.sendAlert(s, alert);
-  await markSent(alert.site, alert.kind, day);
-  return { ok: true };
+  try {
+    await UsNotify.sendAlert(s, alert);
+    await markSent(alert, extra);
+    return { ok: true };
+  } catch (e) {
+    await enqueueAlert(alert, extra, e.message || e);
+    return { ok: false, queued: true, error: String(e.message || e).slice(0, 120) };
+  }
+}
+
+function siteForJob(job) {
+  return SITE_BY_JOB[job] || "";
 }
 
 async function loadLinuxdoDay() {
@@ -88,6 +192,133 @@ async function loadLinuxdoDay() {
 
 async function saveLinuxdoDay(d) {
   await chrome.storage.local.set({ [LINUXDO_DAY]: d });
+}
+
+async function linuxdoSettings() {
+  const stored = await chrome.storage.local.get({ [LINUXDO_SETTINGS]: {} });
+  return stored[LINUXDO_SETTINGS] || {};
+}
+
+async function readLockState() {
+  const stored = await chrome.storage.local.get({ [JOB_LOCK]: null, [JOB_QUEUE]: [] });
+  return {
+    lock: stored[JOB_LOCK] || null,
+    queue: Array.isArray(stored[JOB_QUEUE]) ? stored[JOB_QUEUE] : [],
+  };
+}
+
+async function setJobTimeout(deadline) {
+  await chrome.alarms.clear("job-timeout");
+  if (deadline && deadline > Date.now() + 1000) {
+    chrome.alarms.create("job-timeout", { when: deadline });
+  }
+}
+
+async function ensureWatchdog() {
+  const alarm = await chrome.alarms.get("job-watchdog");
+  if (!alarm) chrome.alarms.create("job-watchdog", { periodInMinutes: 1 });
+}
+
+async function notifyLockTimeout(lock, reason) {
+  if (!lock || !lock.job) return;
+  const elapsed = Math.max(0, Math.round((Date.now() - Number(lock.startedAt || 0)) / 1000));
+  await handleAlert({
+    site: siteForJob(lock.job),
+    kind: "job-timeout",
+    text: lock.job + " timed out after " + elapsed + "s (" + String(reason || "timeout") + ")",
+    token: lock.token,
+    job: lock.job,
+  });
+}
+
+async function clearLinuxdoPending() {
+  const d = await loadLinuxdoDay();
+  if (!d.pending) return;
+  d.pending = false;
+  await saveLinuxdoDay(d);
+}
+
+async function failLock(lock, reason) {
+  return serialized(async () => {
+    await chrome.storage.local.set({ [JOB_LOCK]: null });
+    await chrome.alarms.clear("job-timeout");
+    if (lock && lock.job === "linuxdo") await clearLinuxdoPending();
+    await notifyLockTimeout(lock, reason);
+  });
+}
+
+async function acquire(job, settings) {
+  return serialized(async () => {
+    if (!UsJobs.JOBS.includes(job)) return { ok: false, reason: "unknown-job" };
+    const now = Date.now();
+    const state = await readLockState();
+    const decision = UsJobs.decideAcquire(state.lock, job, now);
+    if (!decision.ok) {
+      if (decision.reason === "busy" && UsJobs.shouldAutoQueue(job)) {
+        await chrome.storage.local.set({ [JOB_QUEUE]: UsJobs.enqueueJob(state.queue, job) });
+      }
+      return { ok: false, reason: decision.reason, holder: decision.holder };
+    }
+    if (decision.steal && decision.previous) {
+      await notifyLockTimeout(decision.previous, "watchdog-steal");
+      if (decision.previous.job === "linuxdo") await clearLinuxdoPending();
+    }
+    const token = UsJobs.newToken();
+    const lock = UsJobs.makeLock(job, token, now, UsJobs.timeoutMs(job, settings));
+    await chrome.storage.local.set({ [JOB_LOCK]: lock });
+    const verify = await chrome.storage.local.get({ [JOB_LOCK]: null });
+    if (!verify[JOB_LOCK] || verify[JOB_LOCK].token !== token) {
+      return { ok: false, reason: "lost-race", holder: (verify[JOB_LOCK] || {}).job };
+    }
+    await setJobTimeout(lock.deadline);
+    await ensureWatchdog();
+    return { ok: true, lock, stolen: Boolean(decision.steal) };
+  });
+}
+
+async function release(job) {
+  return serialized(async () => {
+    const state = await readLockState();
+    const st = UsJobs.inspectLock(state.lock, Date.now());
+    if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    await chrome.storage.local.set({ [JOB_LOCK]: null });
+    await chrome.alarms.clear("job-timeout");
+    if (job === "linuxdo") await clearLinuxdoPending();
+    await drainJobQueue();
+    return { ok: true };
+  });
+}
+
+async function hold(job) {
+  return serialized(async () => {
+    const state = await readLockState();
+    const st = UsJobs.inspectLock(state.lock, Date.now());
+    if (st.expired && st.lock) {
+      await failLock(st.lock, "expired-hold");
+      await drainJobQueue();
+      return { ok: false, reason: "expired" };
+    }
+    if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    return { ok: true, lock: st.lock };
+  });
+}
+
+async function drainJobQueue() {
+  for (;;) {
+    const state = await readLockState();
+    const st = UsJobs.inspectLock(state.lock, Date.now());
+    if (st.held) return;
+    const next = UsJobs.dequeueJob(state.queue);
+    await chrome.storage.local.set({ [JOB_QUEUE]: next.queue });
+    if (!next.job) return;
+    let result = { skipped: "unknown" };
+    if (next.job === "linuxdo") result = await startLinuxdoSession();
+    else if (next.job === "nodeseek") result = await startNodeseekCheckin();
+    else return;
+    if (result && result.ok) return;
+    if (result && (result.skipped === "done" || result.skipped === "cap")) continue;
+    return;
+  }
 }
 
 async function findTab(urlPattern) {
@@ -111,13 +342,15 @@ async function openOrReload(urlPattern, fallbackUrl) {
 
 async function startLinuxdoSession() {
   const d = await loadLinuxdoDay();
-  const stored = await chrome.storage.local.get({ [LINUXDO_SETTINGS]: {} });
-  const sessionsPerDay = Number((stored[LINUXDO_SETTINGS] || {}).sessionsPerDay) || 3;
-  if (d.pending) return { skipped: "running" };
+  const settings = await linuxdoSettings();
+  const sessionsPerDay = Number(settings.sessionsPerDay) || 3;
   if (d.sessions >= sessionsPerDay) return { skipped: "cap" };
-  d.pending = true;
-  d.sessionStartTopics = d.topics;
-  await saveLinuxdoDay(d);
+  const got = await acquire("linuxdo", settings);
+  if (!got.ok) return { skipped: got.reason, holder: got.holder };
+  const fresh = await loadLinuxdoDay();
+  fresh.pending = true;
+  fresh.sessionStartTopics = fresh.topics;
+  await saveLinuxdoDay(fresh);
   await openOrReload("https://linux.do/*", "https://linux.do/unseen");
   return { ok: true };
 }
@@ -126,17 +359,30 @@ async function startNodeseekCheckin() {
   const day = UsDay.beijingDay();
   const stored = await chrome.storage.local.get({ [NODESEEK_LAST]: "" });
   if (stored[NODESEEK_LAST] === day) return { skipped: "done" };
+  const got = await acquire("nodeseek");
+  if (!got.ok) return { skipped: got.reason, holder: got.holder };
   await openOrReload("https://www.nodeseek.com/*", "https://www.nodeseek.com/");
+  return { ok: true };
+}
+
+async function startExpireddomains() {
+  const got = await acquire("expireddomains");
+  if (!got.ok) return { ok: false, error: got.reason === "busy" ? "busy:" + got.holder : got.reason };
   return { ok: true };
 }
 
 async function planTodayAlarms() {
   const parts = UsSchedule.beijingParts();
-  const stored = await chrome.storage.local.get({ [LINUXDO_SETTINGS]: {} });
-  const sessionsPerDay = Number((stored[LINUXDO_SETTINGS] || {}).sessionsPerDay) || 3;
+  const settings = await linuxdoSettings();
+  const sessionsPerDay = Number(settings.sessionsPerDay) || 3;
   const start = Math.max(parts.minute + 2, 8 * 60);
   const minutes = UsSchedule.pickUniqueMinutes(sessionsPerDay, start, 23 * 60);
-  await chrome.alarms.clearAll();
+  const existing = await chrome.alarms.getAll();
+  for (const alarm of existing) {
+    if (alarm.name.startsWith("linuxdo-session") || alarm.name === "nodeseek-checkin" || alarm.name === "plan-day") {
+      await chrome.alarms.clear(alarm.name);
+    }
+  }
   minutes.forEach((minute, i) => {
     const when = UsSchedule.alarmWhen(parts.day, minute);
     if (!when || when <= Date.now() + 5000) return;
@@ -151,18 +397,90 @@ async function planTodayAlarms() {
   if (nextPlan > Date.now()) {
     chrome.alarms.create("plan-day", { when: nextPlan });
   }
+  await chrome.storage.local.set({ [JOB_PLAN_DAY]: parts.day });
+  await ensureWatchdog();
+}
+
+async function healSchedule() {
+  const parts = UsSchedule.beijingParts();
+  const stored = await chrome.storage.local.get({ [JOB_PLAN_DAY]: "" });
+  if (stored[JOB_PLAN_DAY] !== parts.day) {
+    await planTodayAlarms();
+    return;
+  }
+  const alarms = await chrome.alarms.getAll();
+  const names = new Set(alarms.map((a) => a.name));
+  if (!names.has("plan-day")) {
+    const nextPlan = UsSchedule.beijingMidnightUtc(parts.day) + 24 * 3600 * 1000 + 60 * 1000;
+    if (nextPlan > Date.now()) chrome.alarms.create("plan-day", { when: nextPlan });
+  }
+  await ensureWatchdog();
+}
+
+async function healLock() {
+  return serialized(async () => {
+    const now = Date.now();
+    const state = await readLockState();
+    const st = UsJobs.inspectLock(state.lock, now);
+    if (st.expired && st.lock) {
+      await failLock(st.lock, "watchdog");
+      await drainJobQueue();
+    }
+    const d = await loadLinuxdoDay();
+    const held = UsJobs.inspectLock((await readLockState()).lock, Date.now());
+    if (d.pending && !(held.held && held.lock.job === "linuxdo")) {
+      await clearLinuxdoPending();
+      await handleAlert({
+        site: "linux.do",
+        kind: "session-failed",
+        text: "linux.do session was stuck and recovered",
+        job: "linuxdo",
+      });
+    }
+  });
+}
+
+async function watchdogTick() {
+  await healLock();
+  await healSchedule();
+  await drainNotifyQueue();
+}
+
+function senderHost(sender) {
+  const url = String((sender && (sender.url || (sender.tab && sender.tab.url))) || "");
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
   planTodayAlarms();
+  drainNotifyQueue();
+  healLock();
 });
 chrome.runtime.onStartup.addListener(() => {
   planTodayAlarms();
+  drainNotifyQueue();
+  healLock();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "plan-day") {
     planTodayAlarms();
+    return;
+  }
+  if (alarm.name === "job-watchdog") {
+    watchdogTick();
+    return;
+  }
+  if (alarm.name === "job-timeout") {
+    healLock();
+    return;
+  }
+  if (alarm.name === "notify-retry") {
+    drainNotifyQueue();
     return;
   }
   if (alarm.name.startsWith("linuxdo-session")) {
@@ -176,13 +494,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
-  const url = String((sender && (sender.url || (sender.tab && sender.tab.url))) || "");
-  let host = "";
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    host = "";
-  }
+  const host = senderHost(sender);
+  const job = JOB_BY_HOST[host] || "";
   if (msg.type === "ingest") {
     if (host !== "member.expireddomains.net") {
       sendResponse({ ok: false, error: "ingest only from expireddomains" });
@@ -216,6 +529,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
     sendResponse({ ok: false, error: "run-now only from linux.do" });
+    return;
+  }
+  if (msg.type === "job-start") {
+    if (job === "expireddomains" && msg.job === "expireddomains") {
+      startExpireddomains()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+      return true;
+    }
+    if (job === "nodeseek" && msg.job === "nodeseek") {
+      startNodeseekCheckin()
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+      return true;
+    }
+    sendResponse({ ok: false, error: "job-start host mismatch" });
+    return;
+  }
+  if (msg.type === "job-done") {
+    if (!job || job !== msg.job) {
+      sendResponse({ ok: false, error: "job-done host mismatch" });
+      return;
+    }
+    release(job)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
+  if (msg.type === "job-hold") {
+    if (!job || job !== msg.job) {
+      sendResponse({ ok: false, error: "job-hold host mismatch" });
+      return;
+    }
+    hold(job)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
   }
 });
 

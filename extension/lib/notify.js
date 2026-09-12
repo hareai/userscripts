@@ -1,7 +1,7 @@
 (function (root) {
   "use strict";
 
-  const KINDS = ["login-lost", "checkin-failed", "session-failed"];
+  const KINDS = ["login-lost", "checkin-failed", "session-failed", "job-timeout"];
   const SITES = ["linux.do", "nodeseek.com", "expireddomains"];
 
   function bytesToHex(buf) {
@@ -59,15 +59,25 @@
     if (!payload) throw new Error("invalid alert");
     const body = JSON.stringify(payload);
     const sig = await githubSignature(secret, body);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Hub-Signature-256": sig,
-        "X-GitHub-Event": payload.kind,
-      },
-      body,
-    });
+    const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 15000) : null;
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Hub-Signature-256": sig,
+          "X-GitHub-Event": payload.kind,
+        },
+        body,
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+    } catch (e) {
+      throw new Error("notify network: " + String(e.message || e).slice(0, 120));
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     const text = await res.text();
     if (res.status < 200 || res.status >= 300) {
       throw new Error("notify " + res.status + ": " + text.slice(0, 200));

@@ -103,12 +103,30 @@
 
   async function finishSession() {
     const d = await loadDay();
+    const wasPending = d.pending;
     d.pending = false;
     await saveDay(d);
     await render();
+    if (!wasPending) return;
+    chrome.runtime.sendMessage({ type: "job-done", job: "linuxdo" }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
+  function holdJob() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "job-hold", job: "linuxdo" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(res && res.ok);
+      });
+    });
   }
 
   async function openNext() {
+    if (!(await holdJob())) {
+      await finishSession();
+      return;
+    }
     const s = await loadSettings();
     const d = await loadDay();
     if (!d.pending) return;
@@ -151,6 +169,10 @@
     const s = await loadSettings();
     const d = await loadDay();
     if (!d.pending) return;
+    if (!(await holdJob())) {
+      await finishSession();
+      return;
+    }
     const progressed = d.topics - (d.sessionStartTopics || 0);
     if (isTopic(location.pathname) && progressed === 0) {
       location.assign("/unseen");
@@ -165,8 +187,8 @@
           const done = cur.topics - (cur.sessionStartTopics || 0);
           if (done >= s.topicsPerSession) {
             cur.sessions += 1;
-            cur.pending = false;
             await saveDay(cur);
+            await finishSession();
           }
           later(() => location.assign("/unseen"), 800);
         });

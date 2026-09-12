@@ -194,6 +194,36 @@ test("random daily minutes are unique and inside window", () => {
   assert.equal(when, Date.UTC(2026, 8, 12, 1, 0, 0));
 });
 
+test("job lock: one at a time, timeout, queue", () => {
+  const jobs = loadLib("jobs.js");
+  const now = 1_000_000;
+  const lock = jobs.makeLock("linuxdo", "tok", now, 60_000);
+  assert.equal(lock.job, "linuxdo");
+  assert.equal(lock.deadline, now + 60_000);
+  assert.equal(jobs.inspectLock(lock, now + 10).held, true);
+  assert.equal(jobs.inspectLock(lock, now + 60_000).expired, true);
+  assert.equal(jobs.decideAcquire(null, "linuxdo", now).ok, true);
+  assert.equal(jobs.decideAcquire(lock, "nodeseek", now).ok, false);
+  assert.equal(jobs.decideAcquire(lock, "nodeseek", now).reason, "busy");
+  assert.equal(jobs.decideAcquire(lock, "linuxdo", now).reason, "running");
+  assert.equal(jobs.decideAcquire(lock, "nodeseek", now + 60_000).ok, true);
+  assert.equal(jobs.decideAcquire(lock, "nodeseek", now + 60_000).steal, true);
+  assert.deepEqual(jobs.enqueueJob([], "linuxdo"), ["linuxdo"]);
+  assert.deepEqual(jobs.enqueueJob(["linuxdo"], "linuxdo"), ["linuxdo"]);
+  assert.deepEqual(jobs.enqueueJob(["linuxdo"], "nodeseek"), ["linuxdo", "nodeseek"]);
+  assert.deepEqual(jobs.enqueueJob([], "expireddomains"), []);
+  assert.equal(jobs.dequeueJob(["nodeseek", "linuxdo"]).job, "nodeseek");
+  assert.ok(jobs.linuxdoTimeoutMs({ staySec: 20, gapSec: 8, topicsPerSession: 1 }) >= jobs.LINUXDO_TIMEOUT_MIN_MS);
+  assert.equal(jobs.timeoutMs("nodeseek"), jobs.NODESEEK_TIMEOUT_MS);
+  assert.equal(jobs.notifyRetryDelay(0), 60 * 1000);
+  assert.equal(jobs.notifyRetryDelay(9), 30 * 60 * 1000);
+  assert.equal(jobs.alertDedupeKey({ site: "linux.do", kind: "login-lost", day: "2026-09-12" }), "2026-09-12:linux.do:login-lost");
+  assert.equal(
+    jobs.alertDedupeKey({ site: "linux.do", kind: "job-timeout", day: "2026-09-12", token: "aa" }),
+    "2026-09-12:linux.do:job-timeout:aa",
+  );
+});
+
 test("notify adapter: loopback webhook URL and HMAC", async () => {
   assert.ok(notify.hermesWebhookUrl("http://127.0.0.1:8644/webhooks/userscripts-alerts"));
   assert.equal(notify.hermesWebhookUrl("http://example.com/webhooks/x"), "");
@@ -205,6 +235,7 @@ test("notify adapter: loopback webhook URL and HMAC", async () => {
     "sha256=" + nodeCrypto.createHmac("sha256", "secret").update(body).digest("hex");
   assert.equal(sig, expected);
   assert.equal(notify.sanitizeAlert({ site: "linux.do", kind: "login-lost", text: "please login" }).kind, "login-lost");
+  assert.equal(notify.sanitizeAlert({ site: "linux.do", kind: "job-timeout", text: "linuxdo timed out" }).kind, "job-timeout");
   assert.equal(notify.sanitizeAlert({ site: "evil.com", kind: "login-lost", text: "x" }), null);
   assert.equal(typeof notify.getAdapter("hermes"), "function");
 });
@@ -221,6 +252,12 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   for (const p of manifest.host_permissions) {
     assert.equal(p.includes("localhost"), false);
   }
+  const text = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+  assert.match(text, /jobs\.lock/);
+  assert.match(text, /job-watchdog/);
+  assert.match(text, /alerts\.queue/);
+  assert.match(text, /job-timeout/);
+  assert.equal(text.includes("chrome.alarms.clearAll"), false);
   assert.equal(manifest.content_scripts.length, 3);
 });
 

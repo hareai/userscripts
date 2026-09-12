@@ -58,6 +58,15 @@
     });
   }
 
+  function sendJob(type) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type, job: "expireddomains" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(res || { ok: false });
+      });
+    });
+  }
+
   async function fetchSearches() {
     const html = await fetch("/savedsearches/menu/", { credentials: "include" }).then((r) => {
       if (!r.ok) throw new Error("menu " + r.status);
@@ -123,9 +132,22 @@
   }
 
   async function step() {
+    const hold = await sendJob("job-hold");
+    if (!hold.ok) {
+      const run = loadRun();
+      if (run) {
+        run.running = false;
+        saveRun(run);
+      }
+      setStatus("stopped");
+      return;
+    }
     const s = loadSettingsSync();
     const run = loadRun();
-    if (!run || !run.running) return;
+    if (!run || !run.running) {
+      await sendJob("job-done");
+      return;
+    }
     const pages = num(run.pages, 1, 20, s.pages);
     run.pages = pages;
 
@@ -139,6 +161,7 @@
         run.running = false;
         saveRun(run);
         setStatus("no saved searches");
+        await sendJob("job-done");
         return;
       }
       go(new URL(run.searches[0].href, location.origin).href);
@@ -150,6 +173,7 @@
       run.running = false;
       saveRun(run);
       setStatus("done · " + (run.sent || 0) + " rows");
+      await sendJob("job-done");
       return;
     }
 
@@ -165,6 +189,7 @@
       run.running = false;
       saveRun(run);
       setStatus(String(e.message || e));
+      await sendJob("job-done");
       return;
     }
 
@@ -183,12 +208,18 @@
       run.running = false;
       saveRun(run);
       setStatus("done · " + (run.sent || 0) + " rows");
+      await sendJob("job-done");
       return;
     }
     setTimeout(() => go(new URL(next.href, location.origin).href), s.gapSec * 1000);
   }
 
   async function startRun() {
+    const got = await sendJob("job-start");
+    if (!got.ok) {
+      setStatus(got.error || "busy");
+      return;
+    }
     const s = loadSettingsSync();
     saveRun({
       running: true,
@@ -207,6 +238,7 @@
     run.running = false;
     saveRun(run);
     setStatus("stopped");
+    sendJob("job-done");
     render();
   }
 
