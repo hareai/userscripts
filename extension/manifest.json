@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "userscripts",
+  "version": "1.0.0",
+  "description": "Personal local jobs for linux.do, NodeSeek, and ExpiredDomains.",
+  "homepage_url": "https://github.com/hareai/userscripts",
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "userscripts options",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://[::1]/*",
+    "https://127.0.0.1/*",
+    "https://[::1]/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://linux.do/*"],
+      "js": ["lib/beijing-day.js", "lib/linuxdo.js", "content/linuxdo.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.nodeseek.com/*"],
+      "js": ["lib/beijing-day.js", "lib/nodeseek.js", "content/nodeseek.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://member.expireddomains.net/*"],
+      "js": ["lib/listings.js", "content/expireddomains.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
