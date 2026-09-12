@@ -267,6 +267,7 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   assert.match(text, /job-timeout/);
   assert.match(text, /beginJob/);
   assert.match(text, /senderMatchesLock/);
+  assert.match(text, /tab-gone/);
   assert.equal(text.includes("chrome.alarms.clearAll"), false);
   assert.equal(text.includes("openOrReload"), false);
   assert.equal(text.includes("attachJobTab"), false);

@@ -451,6 +451,17 @@ async function healSchedule() {
   await ensureWatchdog();
 }
 
+async function tabAlive(tabId) {
+  const id = Number(tabId);
+  if (!Number.isFinite(id) || id <= 0) return false;
+  try {
+    const tab = await chrome.tabs.get(id);
+    return Boolean(tab && tab.id);
+  } catch {
+    return false;
+  }
+}
+
 async function healLock() {
   return serialized(async () => {
     const now = Date.now();
@@ -458,6 +469,9 @@ async function healLock() {
     const st = UsJobs.inspectLock(state.lock, now);
     if (st.expired && st.lock) {
       await failLock(st.lock, "watchdog");
+      await drainJobQueue();
+    } else if (st.held && !(await tabAlive(st.lock.tabId))) {
+      await failLock(st.lock, "tab-gone");
       await drainJobQueue();
     }
     const d = await loadLinuxdoDay();
