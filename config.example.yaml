@@ -1,0 +1,15 @@
+# Copy to extension/config.yaml (that file is gitignored).
+# Chrome loads extension/config.yaml on startup.
+
+notify:
+  adapter: hermes
+  hermes:
+    url: http://127.0.0.1:8644/webhooks/userscripts-alerts
+    secret: ""
+  telegram:
+    bot_token: ""
+    chat_id: ""
+
+ingest:
+  url: ""
+  token: ""

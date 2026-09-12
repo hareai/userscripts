@@ -1,4 +1,4 @@
-/* global UsIngest, UsNotify, UsSchedule, UsDay, UsJobs */
+/* global UsIngest, UsNotify, UsSchedule, UsDay, UsJobs, UsConfig */
 
 importScripts(
   "lib/ingest-url.js",
@@ -6,6 +6,7 @@ importScripts(
   "lib/schedule.js",
   "lib/beijing-day.js",
   "lib/jobs.js",
+  "lib/config.js",
 );
 
 const DEFAULTS = {
@@ -57,8 +58,14 @@ function serialized(fn) {
 }
 
 async function loadSettings() {
-  const stored = await chrome.storage.local.get(DEFAULTS);
-  return { ...DEFAULTS, ...stored };
+  try {
+    const res = await fetch(chrome.runtime.getURL("config.yaml"), { cache: "no-store" });
+    if (!res.ok) return { ...DEFAULTS };
+    const doc = UsConfig.parseYaml(await res.text());
+    return { ...DEFAULTS, ...UsConfig.settingsFromDoc(doc) };
+  } catch {
+    return { ...DEFAULTS };
+  }
 }
 
 function jsonHeaders(token) {

@@ -303,6 +303,44 @@ test("notify adapter registry: hermes default, telegram optional, unknown fails 
   assert.match(calls[0].body, /linux\.do login-lost/);
 });
 
+test("config.yaml is the notify/ingest source of truth", () => {
+  const cfg = loadLib("config.js");
+  const doc = cfg.parseYaml(`
+notify:
+  adapter: telegram
+  hermes:
+    url: http://127.0.0.1:8644/webhooks/userscripts-alerts
+    secret: "hook-secret"
+  telegram:
+    bot_token: "12345:AAAAAAAAAAAAAAAAAAAA"
+    chat_id: "123456789"
+ingest:
+  url: http://127.0.0.1:8787/internal/ingest
+  token: "scout"
+# comment
+`);
+  const s = cfg.settingsFromDoc(doc);
+  assert.equal(s.notifyAdapter, "telegram");
+  assert.equal(s.notifyUrl, "http://127.0.0.1:8644/webhooks/userscripts-alerts");
+  assert.equal(s.notifySecret, "hook-secret");
+  assert.equal(s.telegramBotToken, "12345:AAAAAAAAAAAAAAAAAAAA");
+  assert.equal(s.telegramChatId, "123456789");
+  assert.equal(s.ingestUrl, "http://127.0.0.1:8787/internal/ingest");
+  assert.equal(s.ingestToken, "scout");
+  const example = cfg.parseYaml(
+    fs.readFileSync(path.join(__dirname, "..", "config.example.yaml"), "utf8"),
+  );
+  const fromExample = cfg.settingsFromDoc(example);
+  assert.equal(fromExample.notifyAdapter, "hermes");
+  assert.equal(fromExample.telegramBotToken, "");
+  assert.equal(fromExample.notifySecret, "");
+  const bg = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+  assert.match(bg, /config\.yaml/);
+  assert.match(bg, /UsConfig/);
+  const opt = fs.readFileSync(path.join(__dirname, "..", "extension", "options.js"), "utf8");
+  assert.equal(opt.includes("chrome.storage.local.set"), false);
+});
+
 test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(__dirname, "..", "extension", "manifest.json"), "utf8"),

@@ -1,78 +1,41 @@
-/* global UsIngest, UsNotify */
+/* global UsNotify, UsConfig */
 
-const form = document.getElementById("form");
 const statusEl = document.getElementById("status");
-const urlEl = document.getElementById("ingestUrl");
-const tokenEl = document.getElementById("ingestToken");
-const adapterEl = document.getElementById("notifyAdapter");
-const notifyUrlEl = document.getElementById("notifyUrl");
-const notifySecretEl = document.getElementById("notifySecret");
-const telegramTokenEl = document.getElementById("telegramBotToken");
-const telegramChatEl = document.getElementById("telegramChatId");
-const hermesFields = document.getElementById("hermes-fields");
-const telegramFields = document.getElementById("telegram-fields");
 
-function syncAdapterFields() {
-  const name = adapterEl.value || UsNotify.DEFAULT_ADAPTER;
-  hermesFields.hidden = name !== "hermes";
-  telegramFields.hidden = name !== "telegram";
+function mask(v) {
+  const s = String(v || "");
+  if (!s) return "(empty)";
+  if (s.length <= 6) return "••••";
+  return s.slice(0, 4) + "…" + s.slice(-2);
 }
 
 async function load() {
-  const s = await chrome.storage.local.get({
-    ingestUrl: "",
-    ingestToken: "",
-    notifyAdapter: UsNotify.DEFAULT_ADAPTER,
-    notifyUrl: "",
-    notifySecret: "",
-    telegramBotToken: "",
-    telegramChatId: "",
-  });
-  urlEl.value = s.ingestUrl || "";
-  tokenEl.value = s.ingestToken || "";
-  adapterEl.value = UsNotify.ADAPTERS.includes(s.notifyAdapter) ? s.notifyAdapter : UsNotify.DEFAULT_ADAPTER;
-  notifyUrlEl.value = s.notifyUrl || "";
-  notifySecretEl.value = s.notifySecret || "";
-  telegramTokenEl.value = s.telegramBotToken || "";
-  telegramChatEl.value = s.telegramChatId || "";
-  syncAdapterFields();
+  try {
+    const res = await fetch(chrome.runtime.getURL("config.yaml"), { cache: "no-store" });
+    if (!res.ok) {
+      statusEl.textContent = "missing extension/config.yaml — copy config.example.yaml";
+      return;
+    }
+    const settings = UsConfig.settingsFromDoc(UsConfig.parseYaml(await res.text()));
+    const check = UsNotify.validateSettings(settings);
+    statusEl.textContent =
+      "adapter: " +
+      (settings.notifyAdapter || UsNotify.DEFAULT_ADAPTER) +
+      "\n" +
+      (check.ok ? "config ok" : "config error: " + check.error) +
+      "\nnotify url: " +
+      (settings.notifyUrl || "(empty)") +
+      "\nwebhook secret: " +
+      mask(settings.notifySecret) +
+      "\ntelegram token: " +
+      mask(settings.telegramBotToken) +
+      "\ntelegram chat: " +
+      (settings.telegramChatId || "(empty)") +
+      "\ningest url: " +
+      (settings.ingestUrl || "(empty)");
+  } catch (e) {
+    statusEl.textContent = "config.yaml: " + String(e.message || e);
+  }
 }
-
-adapterEl.addEventListener("change", syncAdapterFields);
-
-form.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const ingestUrl = urlEl.value.trim();
-  const ingestToken = tokenEl.value;
-  const notifyAdapter = adapterEl.value || UsNotify.DEFAULT_ADAPTER;
-  const notifyUrl = notifyUrlEl.value.trim();
-  const notifySecret = notifySecretEl.value;
-  const telegramBotToken = telegramTokenEl.value.trim();
-  const telegramChatId = telegramChatEl.value.trim();
-  if (ingestUrl && !UsIngest.isLoopbackIngestUrl(ingestUrl)) {
-    statusEl.textContent = "ingest URL must be 127.0.0.1 or ::1";
-    return;
-  }
-  const check = UsNotify.validateSettings({
-    notifyAdapter,
-    notifyUrl,
-    telegramBotToken,
-    telegramChatId,
-  });
-  if (!check.ok) {
-    statusEl.textContent = check.error;
-    return;
-  }
-  await chrome.storage.local.set({
-    ingestUrl,
-    ingestToken,
-    notifyAdapter,
-    notifyUrl,
-    notifySecret,
-    telegramBotToken,
-    telegramChatId,
-  });
-  statusEl.textContent = "saved";
-});
 
 load();
