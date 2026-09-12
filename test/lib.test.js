@@ -262,6 +262,10 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   assert.match(text, /job-watchdog/);
   assert.match(text, /alerts\.queue/);
   assert.match(text, /job-timeout/);
+  const linuxdo = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "linuxdo.js"), "utf8");
+  assert.match(linuxdo, /location\.assign\(next\.href\)/);
+  assert.match(linuxdo, /onJobNav/);
+  assert.equal(linuxdo.includes("next.click()"), false);
   assert.match(text, /decideStart/);
   assert.match(text, /beginJob/);
   assert.equal(text.includes("pending"), false);

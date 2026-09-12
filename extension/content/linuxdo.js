@@ -144,13 +144,14 @@
     d.visited[id] = Date.now();
     d.topics += 1;
     await saveDay(d);
-    next.click();
-    later(() => {
-      if (isList(location.pathname)) location.assign(next.href);
-    }, 1800);
+    location.assign(next.href);
   }
 
+  let tickPath = "";
   async function tick() {
+    const path = location.pathname;
+    if (tickPath === path) return;
+    tickPath = path;
     await render();
     if (!(await holdJob())) return;
     if (!loggedIn(document)) {
@@ -192,6 +193,21 @@
       }, s.gapSec * 1000);
     }
   }
+
+  let lastHref = location.href;
+  function onJobNav() {
+    if (location.href === lastHref) return;
+    lastHref = location.href;
+    tickPath = "";
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    stopReadingScroll();
+    tick();
+  }
+  window.addEventListener("popstate", onJobNav);
+  setInterval(onJobNav, 1000);
 
   function ensurePanel() {
     let host = document.getElementById(PANEL_ID);
