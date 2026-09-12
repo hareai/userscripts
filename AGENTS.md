@@ -17,7 +17,7 @@ Binding for agents in this repository.
 - Do not put hostnames, cookies, tokens, or collector ops in this repo.
 - Ingest URL/token and notify webhook secret live in extension options (`chrome.storage.local`), not in content scripts.
 - Notify adapter is `hermes` (local webhook). Do not hardcode ports, tokens, or chat IDs.
-- One job at a time (`jobs.lock` = one tab). Open a job tab, work only there, close it when the lock is released. Do not reuse the owner's tabs.
+- One job at a time. `jobs.lock` is that job's lifetime and equals one tab: open tab → lock → work only there → release closes the tab. Same-day NodeSeek check-in and linux.do session cap skip without opening a tab. Owner tabs are never reused.
 
 ## Before commit
 

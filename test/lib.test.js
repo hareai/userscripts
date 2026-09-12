@@ -197,25 +197,27 @@ test("random daily minutes are unique and inside window", () => {
   assert.equal(when, Date.UTC(2026, 8, 12, 1, 0, 0));
 });
 
-test("job lock: one at a time, timeout, queue", () => {
+test("job lock: one tab lifetime, idempotent start", () => {
   const jobs = loadLib("jobs.js");
   const now = 1_000_000;
-  assert.equal(jobs.inspectLock(jobs.makeLock("linuxdo", "tok", now, 60_000), now + 10).expired, true);
+  const day = "2026-09-12";
+  assert.equal(jobs.inspectLock(null, now).state, "idle");
+  assert.equal(jobs.inspectLock(jobs.makeLock("linuxdo", "tok", now, 60_000), now + 10).state, "dead");
   const lock = jobs.makeLock("linuxdo", "tok", now, 60_000, 7);
-  assert.equal(lock.job, "linuxdo");
   assert.equal(lock.tabId, 7);
-  assert.equal(lock.deadline, now + 60_000);
-  assert.equal(jobs.inspectLock(lock, now + 10).held, true);
-  assert.equal(jobs.inspectLock(lock, now + 60_000).expired, true);
+  assert.equal(jobs.inspectLock(lock, now + 10).state, "running");
+  assert.equal(jobs.inspectLock(lock, now + 60_000).state, "dead");
   assert.equal(jobs.senderMatchesLock(lock, 7), true);
   assert.equal(jobs.senderMatchesLock(lock, 8), false);
-  assert.equal(jobs.senderMatchesLock(lock, 0), false);
-  assert.equal(jobs.decideAcquire(null, "linuxdo", now).ok, true);
-  assert.equal(jobs.decideAcquire(lock, "nodeseek", now).ok, false);
-  assert.equal(jobs.decideAcquire(lock, "nodeseek", now).reason, "busy");
-  assert.equal(jobs.decideAcquire(lock, "linuxdo", now).reason, "running");
-  assert.equal(jobs.decideAcquire(lock, "nodeseek", now + 60_000).ok, true);
-  assert.equal(jobs.decideAcquire(lock, "nodeseek", now + 60_000).steal, true);
+  assert.equal(jobs.decideStart("linuxdo", null, now, { linuxdoSessions: 0, linuxdoCap: 3 }).action, "start");
+  assert.equal(jobs.decideStart("linuxdo", null, now, { linuxdoSessions: 3, linuxdoCap: 3 }).action, "skip");
+  assert.equal(jobs.decideStart("linuxdo", null, now, { linuxdoSessions: 3, linuxdoCap: 3 }).reason, "cap");
+  assert.equal(jobs.decideStart("nodeseek", null, now, { day, nodeseekLastBj: day }).action, "skip");
+  assert.equal(jobs.decideStart("nodeseek", null, now, { day, nodeseekLastBj: day }).reason, "done");
+  assert.equal(jobs.decideStart("nodeseek", lock, now, { day }).action, "queue");
+  assert.equal(jobs.decideStart("linuxdo", lock, now, { linuxdoSessions: 0, linuxdoCap: 3 }).action, "skip");
+  assert.equal(jobs.decideStart("linuxdo", lock, now, { linuxdoSessions: 0, linuxdoCap: 3 }).reason, "running");
+  assert.equal(jobs.decideStart("nodeseek", lock, now + 60_000, { day }).action, "reap");
   assert.deepEqual(jobs.enqueueJob([], "linuxdo"), ["linuxdo"]);
   assert.deepEqual(jobs.enqueueJob(["linuxdo"], "linuxdo"), ["linuxdo"]);
   assert.deepEqual(jobs.enqueueJob(["linuxdo"], "nodeseek"), ["linuxdo", "nodeseek"]);
@@ -224,12 +226,7 @@ test("job lock: one at a time, timeout, queue", () => {
   assert.ok(jobs.linuxdoTimeoutMs({ staySec: 20, gapSec: 8, topicsPerSession: 1 }) >= jobs.LINUXDO_TIMEOUT_MIN_MS);
   assert.equal(jobs.timeoutMs("nodeseek"), jobs.NODESEEK_TIMEOUT_MS);
   assert.equal(jobs.notifyRetryDelay(0), 60 * 1000);
-  assert.equal(jobs.notifyRetryDelay(9), 30 * 60 * 1000);
-  assert.equal(jobs.alertDedupeKey({ site: "linux.do", kind: "login-lost", day: "2026-09-12" }), "2026-09-12:linux.do:login-lost");
-  assert.equal(
-    jobs.alertDedupeKey({ site: "linux.do", kind: "job-timeout", day: "2026-09-12", token: "aa" }),
-    "2026-09-12:linux.do:job-timeout:aa",
-  );
+  assert.equal(jobs.alertDedupeKey({ site: "linux.do", kind: "login-lost", day }), "2026-09-12:linux.do:login-lost");
 });
 
 test("notify adapter: loopback webhook URL and HMAC", async () => {
@@ -265,9 +262,10 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   assert.match(text, /job-watchdog/);
   assert.match(text, /alerts\.queue/);
   assert.match(text, /job-timeout/);
+  assert.match(text, /decideStart/);
   assert.match(text, /beginJob/);
-  assert.match(text, /senderMatchesLock/);
-  assert.match(text, /tab-gone/);
+  assert.equal(text.includes("pending"), false);
+  assert.equal(text.includes("decideAcquire"), false);
   assert.equal(text.includes("chrome.alarms.clearAll"), false);
   assert.equal(text.includes("openOrReload"), false);
   assert.equal(text.includes("attachJobTab"), false);

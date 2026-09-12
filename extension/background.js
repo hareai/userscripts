@@ -185,9 +185,9 @@ async function loadLinuxdoDay() {
   const stored = await chrome.storage.local.get({ [LINUXDO_DAY]: {} });
   const saved = stored[LINUXDO_DAY] || {};
   if (saved.day !== day) {
-    return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0 };
+    return { day, topics: 0, likes: 0, sessions: 0, visited: {}, sessionStartTopics: 0 };
   }
-  return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0, ...saved };
+  return { day, topics: 0, likes: 0, sessions: 0, visited: {}, sessionStartTopics: 0, ...saved };
 }
 
 async function saveLinuxdoDay(d) {
@@ -197,6 +197,19 @@ async function saveLinuxdoDay(d) {
 async function linuxdoSettings() {
   const stored = await chrome.storage.local.get({ [LINUXDO_SETTINGS]: {} });
   return stored[LINUXDO_SETTINGS] || {};
+}
+
+async function jobLedger() {
+  const day = UsDay.beijingDay();
+  const settings = await linuxdoSettings();
+  const d = await loadLinuxdoDay();
+  const stored = await chrome.storage.local.get({ [NODESEEK_LAST]: "" });
+  return {
+    day,
+    nodeseekLastBj: stored[NODESEEK_LAST] || "",
+    linuxdoSessions: d.sessions,
+    linuxdoCap: Number(settings.sessionsPerDay) || 3,
+  };
 }
 
 async function readLockState() {
@@ -246,13 +259,6 @@ function senderTabId(sender) {
   return Number(id) > 0 ? Number(id) : 0;
 }
 
-async function clearLinuxdoPending() {
-  const d = await loadLinuxdoDay();
-  if (!d.pending) return;
-  d.pending = false;
-  await saveLinuxdoDay(d);
-}
-
 async function failLock(lock, reason) {
   return serialized(async () => {
     const state = await readLockState();
@@ -260,7 +266,6 @@ async function failLock(lock, reason) {
     if (!lock || !current || current.token !== lock.token) return;
     await chrome.storage.local.set({ [JOB_LOCK]: null });
     await chrome.alarms.clear("job-timeout");
-    if (lock.job === "linuxdo") await clearLinuxdoPending();
     await closeJobTab(lock);
     await notifyLockTimeout(lock, reason);
   });
@@ -273,17 +278,17 @@ async function acquire(job, settings, tabId) {
     if (!Number.isFinite(id) || id <= 0) return { ok: false, reason: "no-tab" };
     const now = Date.now();
     const state = await readLockState();
-    const decision = UsJobs.decideAcquire(state.lock, job, now);
-    if (!decision.ok) {
-      if (decision.reason === "busy" && UsJobs.shouldAutoQueue(job)) {
-        await chrome.storage.local.set({ [JOB_QUEUE]: UsJobs.enqueueJob(state.queue, job) });
-      }
+    const decision = UsJobs.decideStart(job, state.lock, now, await jobLedger());
+    if (decision.action === "skip") return { ok: false, reason: decision.reason };
+    if (decision.action === "queue") {
+      await chrome.storage.local.set({ [JOB_QUEUE]: UsJobs.enqueueJob(state.queue, job) });
+      return { ok: false, reason: "busy", holder: decision.holder };
+    }
+    if (decision.action === "reject") {
       return { ok: false, reason: decision.reason, holder: decision.holder };
     }
-    if (decision.steal && decision.previous) {
-      await notifyLockTimeout(decision.previous, "watchdog-steal");
-      if (decision.previous.job === "linuxdo") await clearLinuxdoPending();
-      await closeJobTab(decision.previous);
+    if (decision.action === "reap" && decision.previous) {
+      await failLock(decision.previous, "dead");
     }
     const token = UsJobs.newToken();
     const lock = UsJobs.makeLock(job, token, now, UsJobs.timeoutMs(job, settings), id);
@@ -294,7 +299,12 @@ async function acquire(job, settings, tabId) {
     }
     await setJobTimeout(lock.deadline);
     await ensureWatchdog();
-    return { ok: true, lock, stolen: Boolean(decision.steal) };
+    if (job === "linuxdo") {
+      const d = await loadLinuxdoDay();
+      d.sessionStartTopics = d.topics;
+      await saveLinuxdoDay(d);
+    }
+    return { ok: true, lock };
   });
 }
 
@@ -302,12 +312,11 @@ async function release(job, tabId) {
   return serialized(async () => {
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, Date.now());
-    if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    if (st.state !== "running" || st.lock.job !== job) return { ok: false, reason: "not-holder" };
     if (!UsJobs.senderMatchesLock(st.lock, tabId)) return { ok: false, reason: "tab-mismatch" };
     const lock = st.lock;
     await chrome.storage.local.set({ [JOB_LOCK]: null });
     await chrome.alarms.clear("job-timeout");
-    if (job === "linuxdo") await clearLinuxdoPending();
     await closeJobTab(lock);
     await drainJobQueue();
     return { ok: true };
@@ -318,18 +327,31 @@ async function hold(job, tabId) {
   return serialized(async () => {
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, Date.now());
-    if (st.expired && st.lock) {
+    if (st.state === "dead" && st.lock) {
       await failLock(st.lock, "expired-hold");
       await drainJobQueue();
       return { ok: false, reason: "expired" };
     }
-    if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    if (st.state !== "running" || st.lock.job !== job) return { ok: false, reason: "not-holder" };
     if (!UsJobs.senderMatchesLock(st.lock, tabId)) return { ok: false, reason: "tab-mismatch" };
     return { ok: true, lock: st.lock };
   });
 }
 
 async function beginJob(job, settings, url) {
+  const state = await readLockState();
+  const decision = UsJobs.decideStart(job, state.lock, Date.now(), await jobLedger());
+  if (decision.action === "skip") return { ok: false, reason: decision.reason };
+  if (decision.action === "queue") {
+    await chrome.storage.local.set({ [JOB_QUEUE]: UsJobs.enqueueJob(state.queue, job) });
+    return { ok: false, reason: "busy", holder: decision.holder };
+  }
+  if (decision.action === "reject") {
+    return { ok: false, reason: decision.reason, holder: decision.holder };
+  }
+  if (decision.action === "reap" && decision.previous) {
+    await failLock(decision.previous, "dead");
+  }
   let tabId = 0;
   try {
     const created = await chrome.tabs.create({ url: "about:blank", active: false });
@@ -360,7 +382,7 @@ async function drainJobQueue() {
   for (;;) {
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, Date.now());
-    if (st.held) return;
+    if (st.state === "running") return;
     const next = UsJobs.dequeueJob(state.queue);
     await chrome.storage.local.set({ [JOB_QUEUE]: next.queue });
     if (!next.job) return;
@@ -375,25 +397,13 @@ async function drainJobQueue() {
 }
 
 async function startLinuxdoSession() {
-  const d = await loadLinuxdoDay();
   const settings = await linuxdoSettings();
-  const sessionsPerDay = Number(settings.sessionsPerDay) || 3;
-  if (d.sessions >= sessionsPerDay) return { skipped: "cap" };
-  d.pending = true;
-  d.sessionStartTopics = d.topics;
-  await saveLinuxdoDay(d);
   const got = await beginJob("linuxdo", settings, "https://linux.do/unseen");
-  if (!got.ok) {
-    await clearLinuxdoPending();
-    return { skipped: got.reason, holder: got.holder };
-  }
+  if (!got.ok) return { skipped: got.reason, holder: got.holder };
   return { ok: true };
 }
 
 async function startNodeseekCheckin() {
-  const day = UsDay.beijingDay();
-  const stored = await chrome.storage.local.get({ [NODESEEK_LAST]: "" });
-  if (stored[NODESEEK_LAST] === day) return { skipped: "done" };
   const got = await beginJob("nodeseek", null, "https://www.nodeseek.com/");
   if (!got.ok) return { skipped: got.reason, holder: got.holder };
   return { ok: true };
@@ -467,23 +477,14 @@ async function healLock() {
     const now = Date.now();
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, now);
-    if (st.expired && st.lock) {
+    if (st.state === "dead" && st.lock) {
       await failLock(st.lock, "watchdog");
       await drainJobQueue();
-    } else if (st.held && !(await tabAlive(st.lock.tabId))) {
+      return;
+    }
+    if (st.state === "running" && !(await tabAlive(st.lock.tabId))) {
       await failLock(st.lock, "tab-gone");
       await drainJobQueue();
-    }
-    const d = await loadLinuxdoDay();
-    const held = UsJobs.inspectLock((await readLockState()).lock, Date.now());
-    if (d.pending && !(held.held && held.lock.job === "linuxdo")) {
-      await clearLinuxdoPending();
-      await handleAlert({
-        site: "linux.do",
-        kind: "session-failed",
-        text: "linux.do session was stuck and recovered",
-        job: "linuxdo",
-      });
     }
   });
 }
@@ -613,10 +614,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  readLockState().then((state) => {
+  readLockState().then(async (state) => {
     const st = UsJobs.inspectLock(state.lock, Date.now());
-    if (st.held && Number(st.lock.tabId) === Number(tabId)) {
-      failLock(st.lock, "tab-closed");
+    if (st.state === "running" && Number(st.lock.tabId) === Number(tabId)) {
+      await failLock(st.lock, "tab-closed");
+      await drainJobQueue();
     }
   });
 });

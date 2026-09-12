@@ -42,44 +42,58 @@
     return String(Date.now().toString(16)) + String(Math.random()).slice(2, 10);
   }
 
-  function inspectLock(lock, now) {
-    if (!lock || typeof lock !== "object") return { empty: true };
-    if (!JOBS.includes(lock.job) || !lock.token) return { empty: true };
-    const tabId = Number(lock.tabId);
-    if (!Number.isFinite(tabId) || tabId <= 0) return { expired: true, lock };
-    if (!Number.isFinite(Number(lock.deadline)) || Number(lock.deadline) <= now) {
-      return { expired: true, lock };
-    }
-    return { held: true, lock };
+  function tabIdOf(lock) {
+    const id = Number(lock && lock.tabId);
+    return Number.isFinite(id) && id > 0 ? id : 0;
   }
 
-  function decideAcquire(lock, job, now) {
-    if (!JOBS.includes(job)) return { ok: false, reason: "unknown-job" };
+  function inspectLock(lock, now) {
+    if (!lock || typeof lock !== "object") return { state: "idle" };
+    if (!JOBS.includes(lock.job) || !lock.token) return { state: "idle" };
+    const tabId = tabIdOf(lock);
+    if (!tabId) return { state: "dead", lock };
+    if (!Number.isFinite(Number(lock.deadline)) || Number(lock.deadline) <= now) {
+      return { state: "dead", lock };
+    }
+    return { state: "running", lock };
+  }
+
+  function decideStart(job, lock, now, ledger) {
+    if (!JOBS.includes(job)) return { action: "reject", reason: "unknown-job" };
+    const book = ledger && typeof ledger === "object" ? ledger : {};
+    if (job === "nodeseek" && book.nodeseekLastBj && book.nodeseekLastBj === book.day) {
+      return { action: "skip", reason: "done" };
+    }
+    if (job === "linuxdo") {
+      const cap = clampInt(book.linuxdoCap, 1, 12, 3);
+      if (clampInt(book.linuxdoSessions, 0, 99, 0) >= cap) return { action: "skip", reason: "cap" };
+    }
     const st = inspectLock(lock, now);
-    if (st.empty) return { ok: true, steal: false };
-    if (st.expired) return { ok: true, steal: true, previous: st.lock };
-    if (st.lock.job === job) return { ok: false, reason: "running", holder: job };
-    return { ok: false, reason: "busy", holder: st.lock.job, until: st.lock.deadline };
+    if (st.state === "running") {
+      if (st.lock.job === job) return { action: "skip", reason: "running" };
+      if (AUTO_QUEUE.includes(job)) return { action: "queue", reason: "busy", holder: st.lock.job };
+      return { action: "reject", reason: "busy", holder: st.lock.job };
+    }
+    if (st.state === "dead") return { action: "reap", previous: st.lock };
+    return { action: "start" };
   }
 
   function makeLock(job, token, now, timeout, tabId) {
     const startedAt = Number(now) || 0;
-    const id = Number(tabId);
+    const id = tabIdOf({ tabId });
     return {
       job,
       token: String(token || ""),
       startedAt,
       deadline: startedAt + Math.max(1000, Number(timeout) || NODESEEK_TIMEOUT_MS),
-      tabId: Number.isFinite(id) && id > 0 ? id : 0,
+      tabId: id,
     };
   }
 
   function senderMatchesLock(lock, tabId) {
+    const held = tabIdOf(lock);
     const id = Number(tabId);
-    const held = Number(lock && lock.tabId);
-    if (!Number.isFinite(id) || id <= 0) return false;
-    if (!Number.isFinite(held) || held <= 0) return false;
-    return id === held;
+    return held > 0 && Number.isFinite(id) && id === held;
   }
 
   function enqueueJob(queue, job) {
@@ -128,8 +142,9 @@
     linuxdoTimeoutMs,
     timeoutMs,
     newToken,
+    tabIdOf,
     inspectLock,
-    decideAcquire,
+    decideStart,
     makeLock,
     senderMatchesLock,
     enqueueJob,

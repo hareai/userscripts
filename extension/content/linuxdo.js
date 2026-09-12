@@ -22,9 +22,9 @@
     const stored = await chrome.storage.local.get({ [DAY_KEY]: {} });
     const saved = stored[DAY_KEY] || {};
     if (saved.day !== day) {
-      return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0 };
+      return { day, topics: 0, likes: 0, sessions: 0, visited: {}, sessionStartTopics: 0 };
     }
-    return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0, ...saved };
+    return { day, topics: 0, likes: 0, sessions: 0, visited: {}, sessionStartTopics: 0, ...saved };
   }
 
   async function saveDay(d) {
@@ -102,12 +102,12 @@
   }
 
   async function finishSession() {
+    const s = await loadSettings();
     const d = await loadDay();
-    const wasPending = d.pending;
-    d.pending = false;
+    const progressed = d.topics - (d.sessionStartTopics || 0);
+    if (progressed >= s.topicsPerSession) d.sessions += 1;
     await saveDay(d);
     await render();
-    if (!wasPending) return;
     chrome.runtime.sendMessage({ type: "job-done", job: "linuxdo" }, () => {
       void chrome.runtime.lastError;
     });
@@ -126,7 +126,6 @@
     if (!(await holdJob())) return;
     const s = await loadSettings();
     const d = await loadDay();
-    if (!d.pending) return;
     const progressed = d.topics - (d.sessionStartTopics || 0);
     if (progressed >= s.topicsPerSession || d.sessions >= s.sessionsPerDay) {
       await finishSession();
@@ -166,7 +165,6 @@
     }
     const s = await loadSettings();
     const d = await loadDay();
-    if (!d.pending) return;
     const progressed = d.topics - (d.sessionStartTopics || 0);
     if (isTopic(location.pathname) && progressed === 0) {
       location.assign("/unseen");
@@ -180,9 +178,8 @@
           const cur = await loadDay();
           const done = cur.topics - (cur.sessionStartTopics || 0);
           if (done >= s.topicsPerSession) {
-            cur.sessions += 1;
-            await saveDay(cur);
             await finishSession();
+            return;
           }
           later(() => location.assign("/unseen"), 800);
         });
@@ -258,7 +255,6 @@
       d.likes +
       "/" +
       s.likeCap +
-      (d.pending ? " · running" : "") +
       (loggedIn(document) ? "" : " · login lost");
     host.querySelectorAll("[data-k]").forEach((input) => {
       input.value = s[input.dataset.k];
