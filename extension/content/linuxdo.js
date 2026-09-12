@@ -123,10 +123,7 @@
   }
 
   async function openNext() {
-    if (!(await holdJob())) {
-      await finishSession();
-      return;
-    }
+    if (!(await holdJob())) return;
     const s = await loadSettings();
     const d = await loadDay();
     if (!d.pending) return;
@@ -156,6 +153,7 @@
 
   async function tick() {
     await render();
+    if (!(await holdJob())) return;
     if (!loggedIn(document)) {
       const challenge =
         /請稍候|请稍候|Just a moment|Attention Required/i.test(document.title) ||
@@ -169,10 +167,6 @@
     const s = await loadSettings();
     const d = await loadDay();
     if (!d.pending) return;
-    if (!(await holdJob())) {
-      await finishSession();
-      return;
-    }
     const progressed = d.topics - (d.sessionStartTopics || 0);
     if (isTopic(location.pathname) && progressed === 0) {
       location.assign("/unseen");
@@ -227,7 +221,6 @@
     host.querySelector("[data-act=run]").addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "run-now" }, () => {
         void chrome.runtime.lastError;
-        tick();
       });
     });
     host.querySelectorAll("[data-k]").forEach((input) => {

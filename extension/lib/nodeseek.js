@@ -22,7 +22,12 @@
     return Number(status) === 401 || Number(status) === 403;
   }
 
-  const api = { loggedIn, alreadyCheckedIn, looksLoggedOut };
+  function isSignInPath(pathname) {
+    const p = String(pathname || "").split("?")[0].toLowerCase();
+    return /sign-?in|sign-?up|login|register|auth/.test(p);
+  }
+
+  const api = { loggedIn, alreadyCheckedIn, looksLoggedOut, isSignInPath };
   root.UsNodeseek = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

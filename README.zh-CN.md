@@ -16,7 +16,7 @@
 | [nodeseek.com](https://www.nodeseek.com/) | 已登录时每日签到 |
 | [member.expireddomains.net](https://member.expireddomains.net/) | 当前页依次跑保存搜索（各 5 页），抽到你填的本地地址 |
 
-停留和上限在页内面板改。提醒和 ingest 只发到 `127.0.0.1` / `::1`。通知适配器目前接本机 Hermes webhook（`X-Hub-Signature-256`）。同一时刻只跑一个任务；超时或通知失败会重试，然后告警。
+停留和上限在页内面板改。提醒和 ingest 只发到 `127.0.0.1` / `::1`。通知适配器目前接本机 Hermes webhook（`X-Hub-Signature-256`）。同一时刻只跑一个任务：扩展自己开标签，做完关掉。
 
 仓库里仍保留 `.user.js`，想用脚本管理器也可以。
 

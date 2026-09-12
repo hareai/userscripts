@@ -132,6 +132,9 @@ test("nodeseek login and already-checked", () => {
   assert.equal(nodeseek.alreadyCheckedIn("ok", 500), false);
   assert.equal(nodeseek.looksLoggedOut("USER NOT FOUND", 500), true);
   assert.equal(nodeseek.looksLoggedOut("ok", 200), false);
+  assert.equal(nodeseek.isSignInPath("/signIn.html"), true);
+  assert.equal(nodeseek.isSignInPath("/login"), true);
+  assert.equal(nodeseek.isSignInPath("/"), false);
 });
 
 test("parse saved-search menu", () => {
@@ -197,11 +200,16 @@ test("random daily minutes are unique and inside window", () => {
 test("job lock: one at a time, timeout, queue", () => {
   const jobs = loadLib("jobs.js");
   const now = 1_000_000;
-  const lock = jobs.makeLock("linuxdo", "tok", now, 60_000);
+  assert.equal(jobs.inspectLock(jobs.makeLock("linuxdo", "tok", now, 60_000), now + 10).expired, true);
+  const lock = jobs.makeLock("linuxdo", "tok", now, 60_000, 7);
   assert.equal(lock.job, "linuxdo");
+  assert.equal(lock.tabId, 7);
   assert.equal(lock.deadline, now + 60_000);
   assert.equal(jobs.inspectLock(lock, now + 10).held, true);
   assert.equal(jobs.inspectLock(lock, now + 60_000).expired, true);
+  assert.equal(jobs.senderMatchesLock(lock, 7), true);
+  assert.equal(jobs.senderMatchesLock(lock, 8), false);
+  assert.equal(jobs.senderMatchesLock(lock, 0), false);
   assert.equal(jobs.decideAcquire(null, "linuxdo", now).ok, true);
   assert.equal(jobs.decideAcquire(lock, "nodeseek", now).ok, false);
   assert.equal(jobs.decideAcquire(lock, "nodeseek", now).reason, "busy");
@@ -257,7 +265,11 @@ test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
   assert.match(text, /job-watchdog/);
   assert.match(text, /alerts\.queue/);
   assert.match(text, /job-timeout/);
+  assert.match(text, /beginJob/);
+  assert.match(text, /senderMatchesLock/);
   assert.equal(text.includes("chrome.alarms.clearAll"), false);
+  assert.equal(text.includes("openOrReload"), false);
+  assert.equal(text.includes("attachJobTab"), false);
   assert.equal(manifest.content_scripts.length, 3);
 });
 

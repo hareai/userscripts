@@ -45,6 +45,8 @@
   function inspectLock(lock, now) {
     if (!lock || typeof lock !== "object") return { empty: true };
     if (!JOBS.includes(lock.job) || !lock.token) return { empty: true };
+    const tabId = Number(lock.tabId);
+    if (!Number.isFinite(tabId) || tabId <= 0) return { expired: true, lock };
     if (!Number.isFinite(Number(lock.deadline)) || Number(lock.deadline) <= now) {
       return { expired: true, lock };
     }
@@ -60,14 +62,24 @@
     return { ok: false, reason: "busy", holder: st.lock.job, until: st.lock.deadline };
   }
 
-  function makeLock(job, token, now, timeout) {
+  function makeLock(job, token, now, timeout, tabId) {
     const startedAt = Number(now) || 0;
+    const id = Number(tabId);
     return {
       job,
       token: String(token || ""),
       startedAt,
       deadline: startedAt + Math.max(1000, Number(timeout) || NODESEEK_TIMEOUT_MS),
+      tabId: Number.isFinite(id) && id > 0 ? id : 0,
     };
+  }
+
+  function senderMatchesLock(lock, tabId) {
+    const id = Number(tabId);
+    const held = Number(lock && lock.tabId);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    if (!Number.isFinite(held) || held <= 0) return false;
+    return id === held;
   }
 
   function enqueueJob(queue, job) {
@@ -119,6 +131,7 @@
     inspectLock,
     decideAcquire,
     makeLock,
+    senderMatchesLock,
     enqueueJob,
     dequeueJob,
     notifyRetryDelay,

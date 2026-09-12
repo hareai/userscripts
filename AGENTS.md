@@ -17,7 +17,7 @@ Binding for agents in this repository.
 - Do not put hostnames, cookies, tokens, or collector ops in this repo.
 - Ingest URL/token and notify webhook secret live in extension options (`chrome.storage.local`), not in content scripts.
 - Notify adapter is `hermes` (local webhook). Do not hardcode ports, tokens, or chat IDs.
-- One job at a time (`jobs.lock`). Timeouts fail the job and notify. Notify failures queue and retry.
+- One job at a time (`jobs.lock` = one tab). Open a job tab, work only there, close it when the lock is released. Do not reuse the owner's tabs.
 
 ## Before commit
 

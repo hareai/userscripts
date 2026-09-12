@@ -214,12 +214,7 @@
     setTimeout(() => go(new URL(next.href, location.origin).href), s.gapSec * 1000);
   }
 
-  async function startRun() {
-    const got = await sendJob("job-start");
-    if (!got.ok) {
-      setStatus(got.error || "busy");
-      return;
-    }
+  async function startRunOnThisTab() {
     const s = loadSettingsSync();
     saveRun({
       running: true,
@@ -231,6 +226,15 @@
     });
     setStatus("starting");
     await step();
+  }
+
+  async function startRun() {
+    const got = await sendJob("job-start");
+    if (!got.ok) {
+      setStatus(got.error || "busy");
+      return;
+    }
+    setStatus("job tab started");
   }
 
   function stopRun() {
@@ -301,10 +305,14 @@
 
   function start() {
     render();
-    const run = loadRun();
-    if (run && run.running) {
-      step().catch((e) => setStatus(String(e.message || e)));
-    }
+    sendJob("job-hold")
+      .then((hold) => {
+        if (!hold.ok) return;
+        const run = loadRun();
+        if (run && run.running) return step();
+        return startRunOnThisTab();
+      })
+      .catch((e) => setStatus(String(e.message || e)));
   }
 
   if (document.readyState === "loading") {

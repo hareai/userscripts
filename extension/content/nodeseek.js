@@ -5,6 +5,8 @@
   https://github.com/NodeSeekX/userscript  (GPL-3.0)
   Original: POST /api/attendance?random=true|false while logged in, once per Beijing day.
   This file is check-in only — no editor/upload/filter from NodeSeekX.
+  Only the job tab created by the background alarm may check in. Sign-in pages
+  and the owner's own tabs are left alone.
 */
 
 (() => {
@@ -33,20 +35,15 @@
     });
   }
 
-  function jobStart() {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: "job-start", job: "nodeseek" }, (res) => {
-        void chrome.runtime.lastError;
-        resolve(Boolean(res && res.ok && res.result && res.result.ok));
-      });
-    });
-  }
-
   async function checkin() {
-    if (!(await jobHold())) {
-      if (!(await jobStart())) return;
-      if (!(await jobHold())) return;
+    if (UsNodeseek.isSignInPath(location.pathname)) {
+      if (await jobHold()) {
+        sendAlert("login-lost", "nodeseek.com login is gone — sign in, then reload");
+        jobDone();
+      }
+      return;
     }
+    if (!(await jobHold())) return;
     const day = UsDay.beijingDay();
     const stored = await chrome.storage.local.get({ [KEY]: "" });
     if (stored[KEY] === day) {

@@ -231,6 +231,21 @@ async function notifyLockTimeout(lock, reason) {
   });
 }
 
+async function closeJobTab(lock) {
+  const id = Number(lock && lock.tabId);
+  if (!Number.isFinite(id) || id <= 0) return;
+  try {
+    await chrome.tabs.remove(id);
+  } catch {
+    /* already gone */
+  }
+}
+
+function senderTabId(sender) {
+  const id = sender && sender.tab && sender.tab.id;
+  return Number(id) > 0 ? Number(id) : 0;
+}
+
 async function clearLinuxdoPending() {
   const d = await loadLinuxdoDay();
   if (!d.pending) return;
@@ -240,16 +255,22 @@ async function clearLinuxdoPending() {
 
 async function failLock(lock, reason) {
   return serialized(async () => {
+    const state = await readLockState();
+    const current = state.lock;
+    if (!lock || !current || current.token !== lock.token) return;
     await chrome.storage.local.set({ [JOB_LOCK]: null });
     await chrome.alarms.clear("job-timeout");
-    if (lock && lock.job === "linuxdo") await clearLinuxdoPending();
+    if (lock.job === "linuxdo") await clearLinuxdoPending();
+    await closeJobTab(lock);
     await notifyLockTimeout(lock, reason);
   });
 }
 
-async function acquire(job, settings) {
+async function acquire(job, settings, tabId) {
   return serialized(async () => {
     if (!UsJobs.JOBS.includes(job)) return { ok: false, reason: "unknown-job" };
+    const id = Number(tabId);
+    if (!Number.isFinite(id) || id <= 0) return { ok: false, reason: "no-tab" };
     const now = Date.now();
     const state = await readLockState();
     const decision = UsJobs.decideAcquire(state.lock, job, now);
@@ -262,12 +283,13 @@ async function acquire(job, settings) {
     if (decision.steal && decision.previous) {
       await notifyLockTimeout(decision.previous, "watchdog-steal");
       if (decision.previous.job === "linuxdo") await clearLinuxdoPending();
+      await closeJobTab(decision.previous);
     }
     const token = UsJobs.newToken();
-    const lock = UsJobs.makeLock(job, token, now, UsJobs.timeoutMs(job, settings));
+    const lock = UsJobs.makeLock(job, token, now, UsJobs.timeoutMs(job, settings), id);
     await chrome.storage.local.set({ [JOB_LOCK]: lock });
     const verify = await chrome.storage.local.get({ [JOB_LOCK]: null });
-    if (!verify[JOB_LOCK] || verify[JOB_LOCK].token !== token) {
+    if (!verify[JOB_LOCK] || verify[JOB_LOCK].token !== token || Number(verify[JOB_LOCK].tabId) !== id) {
       return { ok: false, reason: "lost-race", holder: (verify[JOB_LOCK] || {}).job };
     }
     await setJobTimeout(lock.deadline);
@@ -276,20 +298,23 @@ async function acquire(job, settings) {
   });
 }
 
-async function release(job) {
+async function release(job, tabId) {
   return serialized(async () => {
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, Date.now());
     if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    if (!UsJobs.senderMatchesLock(st.lock, tabId)) return { ok: false, reason: "tab-mismatch" };
+    const lock = st.lock;
     await chrome.storage.local.set({ [JOB_LOCK]: null });
     await chrome.alarms.clear("job-timeout");
     if (job === "linuxdo") await clearLinuxdoPending();
+    await closeJobTab(lock);
     await drainJobQueue();
     return { ok: true };
   });
 }
 
-async function hold(job) {
+async function hold(job, tabId) {
   return serialized(async () => {
     const state = await readLockState();
     const st = UsJobs.inspectLock(state.lock, Date.now());
@@ -299,8 +324,36 @@ async function hold(job) {
       return { ok: false, reason: "expired" };
     }
     if (!st.held || st.lock.job !== job) return { ok: false, reason: "not-holder" };
+    if (!UsJobs.senderMatchesLock(st.lock, tabId)) return { ok: false, reason: "tab-mismatch" };
     return { ok: true, lock: st.lock };
   });
+}
+
+async function beginJob(job, settings, url) {
+  let tabId = 0;
+  try {
+    const created = await chrome.tabs.create({ url: "about:blank", active: false });
+    tabId = created && created.id;
+  } catch {
+    return { ok: false, reason: "no-tab" };
+  }
+  if (!tabId) return { ok: false, reason: "no-tab" };
+  const got = await acquire(job, settings, tabId);
+  if (!got.ok) {
+    try {
+      await chrome.tabs.remove(tabId);
+    } catch {
+      /* ignore */
+    }
+    return got;
+  }
+  try {
+    await chrome.tabs.update(tabId, { url });
+  } catch {
+    await failLock(got.lock, "navigate");
+    return { ok: false, reason: "navigate" };
+  }
+  return { ok: true, lock: got.lock };
 }
 
 async function drainJobQueue() {
@@ -321,37 +374,19 @@ async function drainJobQueue() {
   }
 }
 
-async function findTab(urlPattern) {
-  const tabs = await chrome.tabs.query({ url: urlPattern });
-  return tabs.find((t) => t.id) || null;
-}
-
-async function openOrReload(urlPattern, fallbackUrl) {
-  const tab = await findTab(urlPattern);
-  if (tab) {
-    if (tab.url !== fallbackUrl) {
-      await chrome.tabs.update(tab.id, { url: fallbackUrl });
-    } else {
-      await chrome.tabs.reload(tab.id);
-    }
-    return tab.id;
-  }
-  const created = await chrome.tabs.create({ url: fallbackUrl, active: false });
-  return created.id;
-}
-
 async function startLinuxdoSession() {
   const d = await loadLinuxdoDay();
   const settings = await linuxdoSettings();
   const sessionsPerDay = Number(settings.sessionsPerDay) || 3;
   if (d.sessions >= sessionsPerDay) return { skipped: "cap" };
-  const got = await acquire("linuxdo", settings);
-  if (!got.ok) return { skipped: got.reason, holder: got.holder };
-  const fresh = await loadLinuxdoDay();
-  fresh.pending = true;
-  fresh.sessionStartTopics = fresh.topics;
-  await saveLinuxdoDay(fresh);
-  await openOrReload("https://linux.do/*", "https://linux.do/unseen");
+  d.pending = true;
+  d.sessionStartTopics = d.topics;
+  await saveLinuxdoDay(d);
+  const got = await beginJob("linuxdo", settings, "https://linux.do/unseen");
+  if (!got.ok) {
+    await clearLinuxdoPending();
+    return { skipped: got.reason, holder: got.holder };
+  }
   return { ok: true };
 }
 
@@ -359,14 +394,13 @@ async function startNodeseekCheckin() {
   const day = UsDay.beijingDay();
   const stored = await chrome.storage.local.get({ [NODESEEK_LAST]: "" });
   if (stored[NODESEEK_LAST] === day) return { skipped: "done" };
-  const got = await acquire("nodeseek");
+  const got = await beginJob("nodeseek", null, "https://www.nodeseek.com/");
   if (!got.ok) return { skipped: got.reason, holder: got.holder };
-  await openOrReload("https://www.nodeseek.com/*", "https://www.nodeseek.com/");
   return { ok: true };
 }
 
 async function startExpireddomains() {
-  const got = await acquire("expireddomains");
+  const got = await beginJob("expireddomains", null, "https://member.expireddomains.net/");
   if (!got.ok) return { ok: false, error: got.reason === "busy" ? "busy:" + got.holder : got.reason };
   return { ok: true };
 }
@@ -496,6 +530,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg !== "object") return;
   const host = senderHost(sender);
   const job = JOB_BY_HOST[host] || "";
+  const tabId = senderTabId(sender);
   if (msg.type === "ingest") {
     if (host !== "member.expireddomains.net") {
       sendResponse({ ok: false, error: "ingest only from expireddomains" });
@@ -538,12 +573,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
       return true;
     }
-    if (job === "nodeseek" && msg.job === "nodeseek") {
-      startNodeseekCheckin()
-        .then((result) => sendResponse({ ok: true, result }))
-        .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
-      return true;
-    }
     sendResponse({ ok: false, error: "job-start host mismatch" });
     return;
   }
@@ -552,7 +581,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "job-done host mismatch" });
       return;
     }
-    release(job)
+    release(job, tabId)
       .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
@@ -562,11 +591,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: "job-hold host mismatch" });
       return;
     }
-    hold(job)
+    hold(job, tabId)
       .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
     return true;
   }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  readLockState().then((state) => {
+    const st = UsJobs.inspectLock(state.lock, Date.now());
+    if (st.held && Number(st.lock.tabId) === Number(tabId)) {
+      failLock(st.lock, "tab-closed");
+    }
+  });
 });
 
 chrome.action.onClicked.addListener(() => {
