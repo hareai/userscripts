@@ -14,6 +14,8 @@ const DEFAULTS = {
   notifyAdapter: "hermes",
   notifyUrl: "",
   notifySecret: "",
+  telegramBotToken: "",
+  telegramChatId: "",
 };
 
 const LINUXDO_SETTINGS = "linuxdo.settings";
