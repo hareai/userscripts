@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>userscripts</title>
+    <style>
+      :root {
+        --bg: #111;
+        --fg: #eee;
+        --muted: #999;
+        --gap: 12px;
+        --pad: 16px;
+        --font: 14px/1.4 system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: var(--pad);
+        font: var(--font);
+        background: var(--bg);
+        color: var(--fg);
+        max-width: 36em;
+      }
+      label {
+        display: block;
+        margin: var(--gap) 0;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 4px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      button {
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>userscripts</h1>
+    <p class="muted">
+      One local extension. Ingest URL and token stay here, not on the page.
+      Only 127.0.0.1 / ::1 URLs are sent.
+    </p>
+    <form id="form">
+      <label>
+        ingest URL
+        <input
+          id="ingestUrl"
+          name="ingestUrl"
+          type="url"
+          autocomplete="off"
+          placeholder="http://127.0.0.1:port/path"
+        />
+      </label>
+      <label>
+        token
+        <input id="ingestToken" name="ingestToken" type="password" autocomplete="off" />
+      </label>
+      <button type="submit">save</button>
+      <span id="status" class="muted"></span>
+    </form>
+    <p class="muted">
+      linux.do starts paused. NodeSeek check-in runs when you are logged in.
+      expireddomains dumps saved searches from the page panel.
+    </p>
+    <script src="lib/ingest-url.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>
