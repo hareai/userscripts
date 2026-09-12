@@ -6,7 +6,7 @@
   const SETTINGS_KEY = "linuxdo.settings";
   const DAY_KEY = "linuxdo.day";
   const PANEL_ID = "linuxdo-browse-panel";
-  const { DEFAULTS, clampNum, isList, isTopic, topicId, likeCount } = UsLinuxdo;
+  const { DEFAULTS, clampNum, isList, isTopic, topicId, likeCount, loggedIn } = UsLinuxdo;
 
   async function loadSettings() {
     const stored = await chrome.storage.local.get({ [SETTINGS_KEY]: {} });
@@ -22,9 +22,9 @@
     const stored = await chrome.storage.local.get({ [DAY_KEY]: {} });
     const saved = stored[DAY_KEY] || {};
     if (saved.day !== day) {
-      return { day, topics: 0, likes: 0, visited: {} };
+      return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0 };
     }
-    return { day, topics: 0, likes: 0, visited: {}, ...saved };
+    return { day, topics: 0, likes: 0, sessions: 0, visited: {}, pending: false, sessionStartTopics: 0, ...saved };
   }
 
   async function saveDay(d) {
@@ -61,10 +61,16 @@
     }, ms);
   }
 
+  function sendAlert(kind, text) {
+    chrome.runtime.sendMessage({ type: "alert", site: "linux.do", kind, text }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
   async function maybeLike() {
     const s = await loadSettings();
     const d = await loadDay();
-    if (!s.enabled || s.likeCap <= 0) return;
+    if (s.likeCap <= 0) return;
     if (d.likes >= s.likeCap) return;
     const btn = likeButton();
     if (!btn) return;
@@ -75,14 +81,20 @@
     await render();
   }
 
+  async function finishSession() {
+    const d = await loadDay();
+    d.pending = false;
+    await saveDay(d);
+    await render();
+  }
+
   async function openNext() {
     const s = await loadSettings();
     const d = await loadDay();
-    if (!s.enabled) return;
-    if (d.topics >= s.maxTopics) {
-      s.enabled = false;
-      await saveSettings(s);
-      await render();
+    if (!d.pending) return;
+    const progressed = d.topics - (d.sessionStartTopics || 0);
+    if (progressed >= s.topicsPerSession || d.sessions >= s.sessionsPerDay) {
+      await finishSession();
       return;
     }
     const links = topicLinks();
@@ -105,12 +117,25 @@
   }
 
   async function tick() {
-    const s = await loadSettings();
     await render();
-    if (!s.enabled) return;
+    if (!loggedIn(document)) {
+      sendAlert("login-lost", "linux.do login is gone — reopen the tab after you sign in");
+      await finishSession();
+      return;
+    }
+    const s = await loadSettings();
+    const d = await loadDay();
+    if (!d.pending) return;
     if (isTopic(location.pathname)) {
       later(() => {
-        maybeLike().then(() => {
+        maybeLike().then(async () => {
+          const cur = await loadDay();
+          const progressed = cur.topics - (cur.sessionStartTopics || 0);
+          if (progressed >= s.topicsPerSession) {
+            cur.sessions += 1;
+            cur.pending = false;
+            await saveDay(cur);
+          }
           later(() => {
             if (history.length > 1) history.back();
             else location.assign("/latest");
@@ -137,20 +162,20 @@
       <div style="background:#111;color:#eee;padding:10px 12px;border-radius:8px;min-width:200px;box-shadow:0 4px 16px #0006">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
           <strong>linux.do</strong>
-          <button type="button" data-act="toggle"></button>
+          <button type="button" data-act="run">run now</button>
         </div>
         <div data-status style="margin:6px 0;opacity:.85"></div>
         <label>stay <input data-k="staySec" type="number" min="5" max="600" style="width:4em"> s</label><br>
         <label>gap <input data-k="gapSec" type="number" min="2" max="120" style="width:4em"> s</label><br>
-        <label>topics/day <input data-k="maxTopics" type="number" min="1" max="200" style="width:4em"></label><br>
-        <label>like cap <input data-k="likeCap" type="number" min="0" max="50" style="width:4em"> (0=off)</label><br>
+        <label>sessions/day <input data-k="sessionsPerDay" type="number" min="1" max="12" style="width:4em"></label><br>
+        <label>topics/session <input data-k="topicsPerSession" type="number" min="1" max="20" style="width:4em"></label><br>
+        <label>like cap <input data-k="likeCap" type="number" min="0" max="50" style="width:4em"></label><br>
         <label>like min <input data-k="likeMin" type="number" min="0" max="999" style="width:4em"></label>
       </div>`;
     document.documentElement.appendChild(host);
-    host.querySelector("[data-act=toggle]").addEventListener("click", () => {
-      loadSettings().then(async (s) => {
-        s.enabled = !s.enabled;
-        await saveSettings(s);
+    host.querySelector("[data-act=run]").addEventListener("click", () => {
+      chrome.runtime.sendMessage({ type: "run-now" }, () => {
+        void chrome.runtime.lastError;
         tick();
       });
     });
@@ -161,7 +186,8 @@
           const limits = {
             staySec: [5, 600],
             gapSec: [2, 120],
-            maxTopics: [1, 200],
+            sessionsPerDay: [1, 12],
+            topicsPerSession: [1, 20],
             likeCap: [0, 50],
             likeMin: [0, 999],
           }[key];
@@ -179,9 +205,17 @@
     const host = ensurePanel();
     const s = await loadSettings();
     const d = await loadDay();
-    host.querySelector("[data-act=toggle]").textContent = s.enabled ? "pause" : "start";
     host.querySelector("[data-status]").textContent =
-      "topics " + d.topics + "/" + s.maxTopics + " · likes " + d.likes + "/" + s.likeCap;
+      "sessions " +
+      d.sessions +
+      "/" +
+      s.sessionsPerDay +
+      " · likes " +
+      d.likes +
+      "/" +
+      s.likeCap +
+      (d.pending ? " · running" : "") +
+      (loggedIn(document) ? "" : " · login lost");
     host.querySelectorAll("[data-k]").forEach((input) => {
       input.value = s[input.dataset.k];
     });

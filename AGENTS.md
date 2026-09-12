@@ -15,7 +15,8 @@ Binding for agents in this repository.
 - Keep NodeSeek check-in as check-in only.
 - Public docs stay product pages: what it is, how to install, license.
 - Do not put hostnames, cookies, tokens, or collector ops in this repo.
-- Ingest URL/token live in extension options (`chrome.storage.local`), not in content scripts.
+- Ingest URL/token and notify webhook secret live in extension options (`chrome.storage.local`), not in content scripts.
+- Notify adapter is `hermes` (local webhook). Do not hardcode ports, tokens, or chat IDs.
 
 ## Before commit
 

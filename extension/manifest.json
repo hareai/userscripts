@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "userscripts",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Personal local jobs for linux.do, NodeSeek, and ExpiredDomains.",
   "homepage_url": "https://github.com/hareai/userscripts",
   "icons": {
@@ -23,8 +23,10 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
   "host_permissions": [
+    "https://linux.do/*",
+    "https://www.nodeseek.com/*",
     "http://127.0.0.1/*",
     "http://[::1]/*",
     "https://127.0.0.1/*",

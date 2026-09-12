@@ -12,12 +12,18 @@
 
   const KEY = "nodeseek.last-bj";
 
+  function sendAlert(kind, text) {
+    chrome.runtime.sendMessage({ type: "alert", site: "nodeseek.com", kind, text }, () => {
+      void chrome.runtime.lastError;
+    });
+  }
+
   async function checkin() {
     const day = UsDay.beijingDay();
     const stored = await chrome.storage.local.get({ [KEY]: "" });
     if (stored[KEY] === day) return;
     if (!UsNodeseek.loggedIn(document)) {
-      console.warn("[nodeseek-checkin] not logged in, skip");
+      sendAlert("login-lost", "nodeseek.com login is gone — sign in, then reload");
       return;
     }
     const random = true;
@@ -33,10 +39,10 @@
         await chrome.storage.local.set({ [KEY]: day });
         console.info("[nodeseek-checkin]", msg || "ok");
       } else {
-        console.warn("[nodeseek-checkin] fail", r.status, data);
+        sendAlert("checkin-failed", "nodeseek check-in failed: " + String(msg).slice(0, 80));
       }
     } catch (e) {
-      console.warn("[nodeseek-checkin] error", e);
+      sendAlert("checkin-failed", "nodeseek check-in error: " + String(e.message || e).slice(0, 80));
     }
   }
 
