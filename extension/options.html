@@ -24,7 +24,8 @@
         display: block;
         margin: var(--gap) 0;
       }
-      input {
+      input,
+      select {
         width: 100%;
         box-sizing: border-box;
         margin-top: 4px;
@@ -40,10 +41,30 @@
   <body>
     <h1>userscripts</h1>
     <p class="muted">
-      One local extension. Ingest URL and token stay here, not on the page.
-      Only 127.0.0.1 / ::1 URLs are sent.
+      One local extension. Secrets stay here, not on the page. Only 127.0.0.1 / ::1
+      URLs are sent.
     </p>
     <form id="form">
+      <label>
+        notify adapter
+        <select id="notifyAdapter" name="notifyAdapter">
+          <option value="hermes">hermes (local webhook)</option>
+        </select>
+      </label>
+      <label>
+        Hermes webhook URL
+        <input
+          id="notifyUrl"
+          name="notifyUrl"
+          type="url"
+          autocomplete="off"
+          placeholder="http://127.0.0.1:8644/webhooks/name"
+        />
+      </label>
+      <label>
+        webhook secret
+        <input id="notifySecret" name="notifySecret" type="password" autocomplete="off" />
+      </label>
       <label>
         ingest URL
         <input
@@ -55,17 +76,20 @@
         />
       </label>
       <label>
-        token
+        ingest token
         <input id="ingestToken" name="ingestToken" type="password" autocomplete="off" />
       </label>
       <button type="submit">save</button>
       <span id="status" class="muted"></span>
     </form>
     <p class="muted">
-      linux.do starts paused. NodeSeek check-in runs when you are logged in.
-      expireddomains dumps saved searches from the page panel.
+      linux.do: three random sessions per Beijing day, like cap 2. NodeSeek check-in
+      when logged in. One job = one tab the extension opens and closes. Login-lost
+      and timeouts post through the Hermes adapter. expireddomains dumps saved
+      searches from its job tab.
     </p>
     <script src="lib/ingest-url.js"></script>
+    <script src="lib/notify.js"></script>
     <script src="options.js"></script>
   </body>
 </html>

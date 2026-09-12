@@ -8,15 +8,15 @@ One unpacked Chrome/Chromium extension for local use.
 
 1. Clone this repository.
 2. Chrome → `chrome://extensions` → Developer mode → Load unpacked → select `extension/`.
-3. Open the extension options. Set a `127.0.0.1` ingest URL if you use ExpiredDomains.
+3. Open the extension options. Optional: a `127.0.0.1` Hermes webhook URL for login-lost alerts, and an ingest URL for ExpiredDomains.
 
 | Site | What it does |
 |---|---|
-| [linux.do](https://linux.do/) | Browse latest topics; optional likes (cap 0 = off) |
+| [linux.do](https://linux.do/) | Three random browse sessions per day; like cap 2 |
 | [nodeseek.com](https://www.nodeseek.com/) | Daily check-in while logged in |
 | [member.expireddomains.net](https://member.expireddomains.net/) | Run saved searches in this tab (5 pages each) and POST rows to a local URL |
 
-linux.do starts paused. Stay time, topic count, and like cap are in the page panel. expireddomains sends nothing until you set a `127.0.0.1` URL in options.
+Stay time and caps are in the page panel. Alerts and ingest POST only to `127.0.0.1` or `::1`. The notify adapter currently talks to a local Hermes webhook (`X-Hub-Signature-256`). One job at a time: the extension opens its own tab, then closes it.
 
 The older `.user.js` files are still here if you prefer a userscript manager.
 

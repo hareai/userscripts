@@ -8,15 +8,15 @@
 
 1. 克隆本仓库。
 2. Chrome → `chrome://extensions` → 开发者模式 → 加载已解压的扩展程序 → 选 `extension/`。
-3. 打开扩展选项。用 ExpiredDomains 时再填 `127.0.0.1` ingest 地址。
+3. 打开扩展选项。可选：填 `127.0.0.1` Hermes webhook（掉登录提醒）和 ingest 地址（ExpiredDomains）。
 
 | 站点 | 做什么 |
 |---|---|
-| [linux.do](https://linux.do/) | 逛最新帖；可选点赞（上限 0 = 关） |
+| [linux.do](https://linux.do/) | 每天随机逛 3 次；点赞上限 2 |
 | [nodeseek.com](https://www.nodeseek.com/) | 已登录时每日签到 |
 | [member.expireddomains.net](https://member.expireddomains.net/) | 当前页依次跑保存搜索（各 5 页），抽到你填的本地地址 |
 
-linux.do 默认暂停。停留、篇数、点赞上限在页内面板改。expireddomains 没在选项里填 `127.0.0.1` URL 不会发送。
+停留和上限在页内面板改。提醒和 ingest 只发到 `127.0.0.1` / `::1`。通知适配器目前接本机 Hermes webhook（`X-Hub-Signature-256`）。同一时刻只跑一个任务：扩展自己开标签，做完关掉。
 
 仓库里仍保留 `.user.js`，想用脚本管理器也可以。
 

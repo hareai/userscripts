@@ -2,11 +2,11 @@
   "use strict";
 
   const DEFAULTS = {
-    enabled: false,
     staySec: 20,
     gapSec: 8,
-    maxTopics: 5,
-    likeCap: 0,
+    sessionsPerDay: 3,
+    topicsPerSession: 1,
+    likeCap: 2,
     likeMin: 0,
   };
 
@@ -18,7 +18,13 @@
 
   function isList(pathname) {
     const p = String(pathname || "").replace(/\/+$/, "") || "/";
-    return p === "/" || p === "/latest" || p.startsWith("/latest/");
+    return (
+      p === "/" ||
+      p === "/latest" ||
+      p.startsWith("/latest/") ||
+      p === "/unseen" ||
+      p.startsWith("/unseen/")
+    );
   }
 
   function isTopic(pathname) {
@@ -45,9 +51,10 @@
       : btn.ariaLabel || btn.title || "";
     const n = String(labeled).match(/(\d+)/);
     if (n) return Number(n[1]);
-    const sibling = btn.parentElement && btn.parentElement.querySelector
-      ? btn.parentElement.querySelector(".count, .like-count")
-      : null;
+    const sibling =
+      btn.parentElement && btn.parentElement.querySelector
+        ? btn.parentElement.querySelector(".count, .like-count")
+        : null;
     if (sibling && /\d/.test(sibling.textContent || "")) {
       return Number(String(sibling.textContent).replace(/\D/g, ""));
     }
@@ -55,7 +62,17 @@
     return text ? Number(text) : 0;
   }
 
-  const api = { DEFAULTS, clampNum, isList, isTopic, topicId, likeCount };
+  function loggedIn(rootEl) {
+    const doc = rootEl || (typeof document !== "undefined" ? document : null);
+    if (!doc || typeof doc.querySelector !== "function") return false;
+    return Boolean(
+      doc.querySelector(
+        "#current-user, .header-dropdown-toggle.current-user, button.user-menu-trigger",
+      ),
+    );
+  }
+
+  const api = { DEFAULTS, clampNum, isList, isTopic, topicId, likeCount, loggedIn };
   root.UsLinuxdo = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
