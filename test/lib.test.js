@@ -90,6 +90,8 @@ test("linux.do path helpers and defaults", () => {
   assert.equal(linuxdo.isList("/"), true);
   assert.equal(linuxdo.isList("/latest"), true);
   assert.equal(linuxdo.isList("/latest/"), true);
+  assert.equal(linuxdo.isList("/unseen"), true);
+  assert.equal(linuxdo.isList("/unseen/"), true);
   assert.equal(linuxdo.isList("/t/hello/123"), false);
   assert.equal(linuxdo.isTopic("/t/hello/123"), true);
   assert.equal(linuxdo.topicId("https://linux.do/t/hello/99"), "99");
@@ -118,8 +120,18 @@ test("nodeseek login and already-checked", () => {
   };
   assert.equal(nodeseek.loggedIn(doc), true);
   assert.equal(nodeseek.loggedIn({ querySelector: () => null }), false);
+  assert.equal(
+    nodeseek.loggedIn({
+      querySelector(sel) {
+        return sel.includes("img.avatar") ? { tagName: "IMG" } : null;
+      },
+    }),
+    false,
+  );
   assert.equal(nodeseek.alreadyCheckedIn("已签到", 400), true);
   assert.equal(nodeseek.alreadyCheckedIn("ok", 500), false);
+  assert.equal(nodeseek.looksLoggedOut("USER NOT FOUND", 500), true);
+  assert.equal(nodeseek.looksLoggedOut("ok", 200), false);
 });
 
 test("parse saved-search menu", () => {

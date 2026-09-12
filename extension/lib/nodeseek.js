@@ -4,10 +4,9 @@
   function loggedIn(rootEl) {
     const doc = rootEl || (typeof document !== "undefined" ? document : null);
     if (!doc || typeof doc.querySelector !== "function") return false;
+    // Guest pages list lots of avatars. Only treat account chrome as login.
     return Boolean(
-      doc.querySelector(
-        'a[href*="/notification"], a[href*="/setting"], img.avatar, .user-card, a[href="/logout"]',
-      ),
+      doc.querySelector('a[href="/logout"], a[href*="/notification"], a[href="/setting"]'),
     );
   }
 
@@ -17,7 +16,13 @@
     return Number(status) === 200 && !msg;
   }
 
-  const api = { loggedIn, alreadyCheckedIn };
+  function looksLoggedOut(message, status) {
+    const msg = String(message || "");
+    if (/USER NOT FOUND|未登录|not logged|unauthorized|login required/i.test(msg)) return true;
+    return Number(status) === 401 || Number(status) === 403;
+  }
+
+  const api = { loggedIn, alreadyCheckedIn, looksLoggedOut };
   root.UsNodeseek = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -35,6 +35,10 @@
       });
       const data = await r.json().catch(() => ({}));
       const msg = data.message || r.statusText || String(r.status);
+      if (UsNodeseek.looksLoggedOut(msg, r.status) || UsNodeseek.looksLoggedOut(msg, data.status)) {
+        sendAlert("login-lost", "nodeseek.com login is gone — sign in, then reload");
+        return;
+      }
       if (data.success || UsNodeseek.alreadyCheckedIn(msg, r.status) || r.status === 200) {
         await chrome.storage.local.set({ [KEY]: day });
         console.info("[nodeseek-checkin]", msg || "ok");

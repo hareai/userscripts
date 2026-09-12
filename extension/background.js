@@ -98,7 +98,11 @@ async function findTab(urlPattern) {
 async function openOrReload(urlPattern, fallbackUrl) {
   const tab = await findTab(urlPattern);
   if (tab) {
-    await chrome.tabs.reload(tab.id);
+    if (tab.url !== fallbackUrl) {
+      await chrome.tabs.update(tab.id, { url: fallbackUrl });
+    } else {
+      await chrome.tabs.reload(tab.id);
+    }
     return tab.id;
   }
   const created = await chrome.tabs.create({ url: fallbackUrl, active: false });
@@ -114,7 +118,7 @@ async function startLinuxdoSession() {
   d.pending = true;
   d.sessionStartTopics = d.topics;
   await saveLinuxdoDay(d);
-  await openOrReload("https://linux.do/*", "https://linux.do/latest");
+  await openOrReload("https://linux.do/*", "https://linux.do/unseen");
   return { ok: true };
 }
 

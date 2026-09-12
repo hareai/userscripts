@@ -53,12 +53,32 @@
   }
 
   let timer = null;
+  let scrollTimer = null;
   function later(fn, ms) {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
       fn();
     }, ms);
+  }
+
+  function stopReadingScroll() {
+    if (scrollTimer) {
+      clearInterval(scrollTimer);
+      scrollTimer = null;
+    }
+  }
+
+  function startReadingScroll() {
+    stopReadingScroll();
+    window.scrollTo(0, 0);
+    scrollTimer = setInterval(() => {
+      const root = document.scrollingElement || document.documentElement;
+      const max = Math.max(0, (root.scrollHeight || 0) - window.innerHeight);
+      if (max <= 0) return;
+      const delta = 140 + Math.floor(Math.random() * 180);
+      root.scrollTop = Math.min(max, (root.scrollTop || 0) + delta);
+    }, 1600);
   }
 
   function sendAlert(kind, text) {
@@ -103,7 +123,7 @@
       return id && !d.visited[id];
     });
     if (!next) {
-      later(() => location.reload(), Math.max(30, s.gapSec) * 1000);
+      await finishSession();
       return;
     }
     const id = topicId(next.href);
@@ -119,27 +139,36 @@
   async function tick() {
     await render();
     if (!loggedIn(document)) {
-      sendAlert("login-lost", "linux.do login is gone — reopen the tab after you sign in");
+      const challenge =
+        /請稍候|请稍候|Just a moment|Attention Required/i.test(document.title) ||
+        Boolean(document.querySelector("#challenge-running, iframe[src*='challenges.cloudflare']"));
+      if (!challenge) {
+        sendAlert("login-lost", "linux.do login is gone — reopen the tab after you sign in");
+      }
       await finishSession();
       return;
     }
     const s = await loadSettings();
     const d = await loadDay();
     if (!d.pending) return;
+    const progressed = d.topics - (d.sessionStartTopics || 0);
+    if (isTopic(location.pathname) && progressed === 0) {
+      location.assign("/unseen");
+      return;
+    }
     if (isTopic(location.pathname)) {
+      startReadingScroll();
       later(() => {
         maybeLike().then(async () => {
+          stopReadingScroll();
           const cur = await loadDay();
-          const progressed = cur.topics - (cur.sessionStartTopics || 0);
-          if (progressed >= s.topicsPerSession) {
+          const done = cur.topics - (cur.sessionStartTopics || 0);
+          if (done >= s.topicsPerSession) {
             cur.sessions += 1;
             cur.pending = false;
             await saveDay(cur);
           }
-          later(() => {
-            if (history.length > 1) history.back();
-            else location.assign("/latest");
-          }, 800);
+          later(() => location.assign("/unseen"), 800);
         });
       }, s.staySec * 1000);
       return;

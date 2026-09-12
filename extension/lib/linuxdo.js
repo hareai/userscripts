@@ -18,7 +18,13 @@
 
   function isList(pathname) {
     const p = String(pathname || "").replace(/\/+$/, "") || "/";
-    return p === "/" || p === "/latest" || p.startsWith("/latest/");
+    return (
+      p === "/" ||
+      p === "/latest" ||
+      p.startsWith("/latest/") ||
+      p === "/unseen" ||
+      p.startsWith("/unseen/")
+    );
   }
 
   function isTopic(pathname) {
