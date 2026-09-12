@@ -12,3 +12,24 @@ notify:
 ingest:
   url: ""
   token: ""
+
+linuxdo:
+  enabled: true
+  stay_sec: 20
+  gap_sec: 8
+  sessions_per_day: 3
+  topics_per_session: 1
+  like_cap: 2
+  like_min: 0
+  window_start_hour: 8
+  window_end_hour: 23
+
+nodeseek:
+  enabled: true
+  random: true
+
+expireddomains:
+  enabled: true
+  pages: 5
+  gap_sec: 2
+  saved_searches: []

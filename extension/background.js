@@ -19,7 +19,6 @@ const DEFAULTS = {
   telegramChatId: "",
 };
 
-const LINUXDO_SETTINGS = "linuxdo.settings";
 const LINUXDO_DAY = "linuxdo.day";
 const NODESEEK_LAST = "nodeseek.last-bj";
 const ALERTS_KEY = "alerts.sent";
@@ -60,11 +59,10 @@ function serialized(fn) {
 async function loadSettings() {
   try {
     const res = await fetch(chrome.runtime.getURL("config.yaml"), { cache: "no-store" });
-    if (!res.ok) return { ...DEFAULTS };
-    const doc = UsConfig.parseYaml(await res.text());
-    return { ...DEFAULTS, ...UsConfig.settingsFromDoc(doc) };
+    const text = res.ok ? await res.text() : "";
+    return { ...DEFAULTS, ...UsConfig.settingsFromDoc(text ? UsConfig.parseYaml(text) : {}) };
   } catch {
-    return { ...DEFAULTS };
+    return { ...DEFAULTS, ...UsConfig.settingsFromDoc({}) };
   }
 }
 
@@ -204,8 +202,8 @@ async function saveLinuxdoDay(d) {
 }
 
 async function linuxdoSettings() {
-  const stored = await chrome.storage.local.get({ [LINUXDO_SETTINGS]: {} });
-  return stored[LINUXDO_SETTINGS] || {};
+  const all = await loadSettings();
+  return all.linuxdo || {};
 }
 
 async function jobLedger() {
@@ -400,25 +398,32 @@ async function drainJobQueue() {
     else if (next.job === "nodeseek") result = await startNodeseekCheckin();
     else return;
     if (result && result.ok) return;
-    if (result && (result.skipped === "done" || result.skipped === "cap")) continue;
+    if (result && (result.skipped === "done" || result.skipped === "cap" || result.skipped === "disabled")) continue;
     return;
   }
 }
 
 async function startLinuxdoSession() {
   const settings = await linuxdoSettings();
+  if (settings.enabled === false) return { skipped: "disabled" };
   const got = await beginJob("linuxdo", settings, "https://linux.do/unseen");
   if (!got.ok) return { skipped: got.reason, holder: got.holder };
   return { ok: true };
 }
 
 async function startNodeseekCheckin() {
+  const all = await loadSettings();
+  if (!all.nodeseek || all.nodeseek.enabled === false) return { skipped: "disabled" };
   const got = await beginJob("nodeseek", null, "https://www.nodeseek.com/");
   if (!got.ok) return { skipped: got.reason, holder: got.holder };
   return { ok: true };
 }
 
 async function startExpireddomains() {
+  const all = await loadSettings();
+  if (!all.expireddomains || all.expireddomains.enabled === false) {
+    return { ok: false, error: "disabled" };
+  }
   const got = await beginJob("expireddomains", null, "https://member.expireddomains.net/");
   if (!got.ok) return { ok: false, error: got.reason === "busy" ? "busy:" + got.holder : got.reason };
   return { ok: true };
@@ -426,10 +431,13 @@ async function startExpireddomains() {
 
 async function planTodayAlarms() {
   const parts = UsSchedule.beijingParts();
-  const settings = await linuxdoSettings();
-  const sessionsPerDay = Number(settings.sessionsPerDay) || 3;
-  const start = Math.max(parts.minute + 2, 8 * 60);
-  const minutes = UsSchedule.pickUniqueMinutes(sessionsPerDay, start, 23 * 60);
+  const all = await loadSettings();
+  const linuxdo = all.linuxdo || {};
+  const sessionsPerDay = Number(linuxdo.sessionsPerDay) || 3;
+  const windowStart = Math.max(0, Math.min(23, Number(linuxdo.windowStartHour) || 8));
+  const windowEnd = Math.max(windowStart + 1, Math.min(24, Number(linuxdo.windowEndHour) || 23));
+  const start = Math.max(parts.minute + 2, windowStart * 60);
+  const minutes = linuxdo.enabled === false ? [] : UsSchedule.pickUniqueMinutes(sessionsPerDay, start, windowEnd * 60);
   const existing = await chrome.alarms.getAll();
   for (const alarm of existing) {
     if (alarm.name.startsWith("linuxdo-session") || alarm.name === "nodeseek-checkin" || alarm.name === "plan-day") {
@@ -441,10 +449,12 @@ async function planTodayAlarms() {
     if (!when || when <= Date.now() + 5000) return;
     chrome.alarms.create("linuxdo-session-" + i, { when });
   });
-  const checkinMin = minutes[0] != null ? Math.max(8 * 60, minutes[0] - 15) : 9 * 60;
-  const checkinWhen = UsSchedule.alarmWhen(parts.day, checkinMin);
-  if (checkinWhen && checkinWhen > Date.now() + 5000) {
-    chrome.alarms.create("nodeseek-checkin", { when: checkinWhen });
+  if (all.nodeseek && all.nodeseek.enabled !== false) {
+    const checkinMin = minutes[0] != null ? Math.max(windowStart * 60, minutes[0] - 15) : windowStart * 60 + 60;
+    const checkinWhen = UsSchedule.alarmWhen(parts.day, checkinMin);
+    if (checkinWhen && checkinWhen > Date.now() + 5000) {
+      chrome.alarms.create("nodeseek-checkin", { when: checkinWhen });
+    }
   }
   const nextPlan = UsSchedule.beijingMidnightUtc(parts.day) + 24 * 3600 * 1000 + 60 * 1000;
   if (nextPlan > Date.now()) {
@@ -555,6 +565,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const host = senderHost(sender);
   const job = JOB_BY_HOST[host] || "";
   const tabId = senderTabId(sender);
+  if (msg.type === "public-config") {
+    loadSettings()
+      .then((s) => sendResponse({ ok: true, settings: UsConfig.publicSettings(s) }))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
   if (msg.type === "ingest") {
     if (host !== "member.expireddomains.net") {
       sendResponse({ ok: false, error: "ingest only from expireddomains" });

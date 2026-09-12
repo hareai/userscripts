@@ -3,24 +3,28 @@
 (() => {
   "use strict";
 
-  const SETTINGS_KEY = "ed.settings";
   const RUN_KEY = "ed-ingest-run";
   const PANEL_ID = "ed-ingest-panel";
   const DEFAULTS = {
     pages: 5,
     gapSec: 2,
+    savedSearches: [],
   };
+  let cachedSettings = { ...DEFAULTS };
 
-  function loadSettingsSync() {
-    try {
-      return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
-    } catch {
-      return { ...DEFAULTS };
-    }
+  function publicConfig() {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "public-config" }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(res && res.ok ? res.settings : null);
+      });
+    });
   }
 
-  function saveSettings(s) {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  async function loadSettings() {
+    const got = await publicConfig();
+    if (got && got.expireddomains) cachedSettings = { ...DEFAULTS, ...got.expireddomains };
+    return cachedSettings;
   }
 
   function loadRun() {
@@ -142,7 +146,7 @@
       setStatus("stopped");
       return;
     }
-    const s = loadSettingsSync();
+    const s = await loadSettings();
     const run = loadRun();
     if (!run || !run.running) {
       await sendJob("job-done");
@@ -154,6 +158,10 @@
     if (!run.searches || !run.searches.length) {
       setStatus("loading saved searches");
       run.searches = await fetchSearches();
+      const wanted = (s.savedSearches || []).map(String).filter(Boolean);
+      if (wanted.length) {
+        run.searches = run.searches.filter((item) => wanted.includes(String(item.id)) || wanted.includes(String(item.name)));
+      }
       run.searchIndex = 0;
       run.pageIndex = 0;
       saveRun(run);
@@ -215,7 +223,7 @@
   }
 
   async function startRunOnThisTab() {
-    const s = loadSettingsSync();
+    const s = await loadSettings();
     saveRun({
       running: true,
       searches: [],
@@ -257,9 +265,8 @@
       <div style="background:#111;color:#eee;padding:10px 12px;border-radius:8px;min-width:240px;box-shadow:0 4px 16px #0006">
         <strong>expireddomains</strong>
         <div data-status style="margin:6px 0;opacity:.85">idle</div>
-        <p style="margin:6px 0;opacity:.75">URL and token: extension options</p>
-        <label>pages <input data-k="pages" type="number" min="1" max="20" style="width:4em"> (200/page)</label><br>
-        <label>gap <input data-k="gapSec" type="number" min="1" max="30" style="width:4em"> s</label>
+        <p style="margin:6px 0;opacity:.75">pages / gap / searches: config.yaml</p>
+        <div data-cfg style="opacity:.75"></div>
         <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
           <button type="button" data-act="run">run saved</button>
           <button type="button" data-act="stop">stop</button>
@@ -270,23 +277,16 @@
       startRun().catch((e) => setStatus(String(e.message || e)));
     });
     host.querySelector("[data-act=stop]").addEventListener("click", stopRun);
-    host.querySelectorAll("[data-k]").forEach((input) => {
-      input.addEventListener("change", () => {
-        const s = loadSettingsSync();
-        if (input.dataset.k === "pages") s.pages = num(input.value, 1, 20, 5);
-        else if (input.dataset.k === "gapSec") s.gapSec = num(input.value, 1, 30, 2);
-        saveSettings(s);
-      });
-    });
     return host;
   }
 
-  function render() {
+  async function render() {
     const host = ensurePanel();
-    const s = loadSettingsSync();
+    const s = await loadSettings();
     const run = loadRun();
-    host.querySelector('[data-k="pages"]').value = s.pages;
-    host.querySelector('[data-k="gapSec"]').value = s.gapSec;
+    host.querySelector("[data-cfg]").textContent =
+      "pages " + s.pages + " · gap " + s.gapSec + "s" +
+      ((s.savedSearches || []).length ? " · " + s.savedSearches.length + " searches" : " · all saved");
     if (run && run.running) {
       const search = (run.searches || [])[run.searchIndex];
       setStatus(

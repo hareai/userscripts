@@ -317,6 +317,26 @@ notify:
 ingest:
   url: http://127.0.0.1:8787/internal/ingest
   token: "scout"
+linuxdo:
+  enabled: true
+  stay_sec: 30
+  gap_sec: 10
+  sessions_per_day: 2
+  topics_per_session: 1
+  like_cap: 1
+  like_min: 3
+  window_start_hour: 9
+  window_end_hour: 22
+nodeseek:
+  enabled: false
+  random: false
+expireddomains:
+  enabled: true
+  pages: 3
+  gap_sec: 4
+  saved_searches:
+    - 653083
+    - 通用域名48d
 # comment
 `);
   const s = cfg.settingsFromDoc(doc);
@@ -327,6 +347,20 @@ ingest:
   assert.equal(s.telegramChatId, "123456789");
   assert.equal(s.ingestUrl, "http://127.0.0.1:8787/internal/ingest");
   assert.equal(s.ingestToken, "scout");
+  assert.equal(s.linuxdo.staySec, 30);
+  assert.equal(s.linuxdo.sessionsPerDay, 2);
+  assert.equal(s.linuxdo.likeCap, 1);
+  assert.equal(s.linuxdo.windowStartHour, 9);
+  assert.equal(s.nodeseek.enabled, false);
+  assert.equal(s.nodeseek.random, false);
+  assert.equal(s.expireddomains.pages, 3);
+  assert.equal(s.expireddomains.gapSec, 4);
+  assert.equal(s.expireddomains.savedSearches.join(","), "653083,通用域名48d");
+  const empty = cfg.settingsFromDoc({});
+  assert.equal(empty.linuxdo.sessionsPerDay, 3);
+  assert.equal(empty.linuxdo.likeCap, 2);
+  assert.equal(empty.nodeseek.enabled, true);
+  assert.equal(empty.expireddomains.pages, 5);
   const example = cfg.parseYaml(
     fs.readFileSync(path.join(__dirname, "..", "config.example.yaml"), "utf8"),
   );
@@ -334,11 +368,26 @@ ingest:
   assert.equal(fromExample.notifyAdapter, "hermes");
   assert.equal(fromExample.telegramBotToken, "");
   assert.equal(fromExample.notifySecret, "");
+  assert.equal(fromExample.linuxdo.sessionsPerDay, 3);
+  assert.equal(fromExample.linuxdo.likeCap, 2);
+  assert.equal(fromExample.nodeseek.random, true);
+  assert.equal(fromExample.expireddomains.pages, 5);
+  const pub = cfg.publicSettings(s);
+  assert.equal(pub.notifySecret, undefined);
+  assert.equal(pub.telegramBotToken, undefined);
+  assert.equal(pub.linuxdo.likeCap, 1);
   const bg = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
   assert.match(bg, /config\.yaml/);
   assert.match(bg, /UsConfig/);
+  assert.match(bg, /public-config/);
   const opt = fs.readFileSync(path.join(__dirname, "..", "extension", "options.js"), "utf8");
   assert.equal(opt.includes("chrome.storage.local.set"), false);
+  const linuxdoContent = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "linuxdo.js"), "utf8");
+  assert.equal(linuxdoContent.includes("linuxdo.settings"), false);
+  assert.equal(linuxdoContent.includes("saveSettings"), false);
+  const ed = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "expireddomains.js"), "utf8");
+  assert.equal(ed.includes("ed.settings"), false);
+  assert.equal(ed.includes("localStorage"), false);
 });
 
 test("manifest is one unpacked MV3 with loopback notify/ingest hosts", () => {
