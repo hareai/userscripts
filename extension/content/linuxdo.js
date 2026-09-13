@@ -5,7 +5,7 @@
 
   const DAY_KEY = "linuxdo.day";
   const PANEL_ID = "linuxdo-browse-panel";
-  const { DEFAULTS, isList, isTopic, topicId, likeCount, loggedIn } = UsLinuxdo;
+  const { DEFAULTS, isList, isTopic, topicId, loggedIn } = UsLinuxdo;
   let cachedSettings = { ...DEFAULTS };
 
   function publicConfig() {
@@ -48,16 +48,6 @@
     return [...document.querySelectorAll(sel)].filter((a) => topicId(a.href));
   }
 
-  function likeButton() {
-    const root =
-      document.querySelector("article#post_1") ||
-      document.querySelector(".topic-post:first-of-type") ||
-      document;
-    return root.querySelector(
-      "button.like:not(.has-like):not([disabled]), button.toggle-like:not(.has-like):not([disabled])",
-    );
-  }
-
   let timer = null;
   let scrollTimer = null;
   function later(fn, ms) {
@@ -98,10 +88,16 @@
     const d = await loadDay();
     if (s.likeCap <= 0) return;
     if (d.likes >= s.likeCap) return;
-    const btn = likeButton();
-    if (!btn) return;
-    if (likeCount(btn) < s.likeMin) return;
-    btn.click();
+    const id = topicId(location.href);
+    if (!id) return;
+    const headers = UsLinuxdo.jsonHeaders(UsLinuxdo.csrfFromDoc(document));
+    const topic = await UsLinuxdo.fetchTopic(id, headers);
+    if (topic.status === 401 || topic.status === 403) return;
+    const post = UsLinuxdo.firstPost(topic.data);
+    if (!post || UsLinuxdo.alreadyLiked(post) || !UsLinuxdo.canLike(post)) return;
+    if (UsLinuxdo.likeCountOf(post) < s.likeMin) return;
+    const put = await UsLinuxdo.postLike(post.id, headers);
+    if (!UsLinuxdo.likeOk(put.status)) return;
     d.likes += 1;
     await saveDay(d);
     await render();

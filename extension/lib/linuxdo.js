@@ -62,6 +62,73 @@
     return text ? Number(text) : 0;
   }
 
+  function csrfFromDoc(doc) {
+    const el = doc && typeof doc.querySelector === "function" ? doc.querySelector('meta[name="csrf-token"]') : null;
+    if (!el) return "";
+    const attr = el.getAttribute ? el.getAttribute("content") : el.content;
+    return String(attr || "").trim();
+  }
+
+  function jsonHeaders(csrf) {
+    const headers = { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" };
+    if (csrf) headers["X-CSRF-Token"] = csrf;
+    return headers;
+  }
+
+  function firstPost(topicJson) {
+    const posts = topicJson && topicJson.post_stream && topicJson.post_stream.posts;
+    return Array.isArray(posts) && posts[0] ? posts[0] : null;
+  }
+
+  function likeAction(post) {
+    const list = post && Array.isArray(post.actions_summary) ? post.actions_summary : [];
+    for (const item of list) {
+      if (Number(item && item.id) === 2) return item;
+    }
+    return null;
+  }
+
+  function alreadyLiked(post) {
+    if (post && post.current_user_reaction) return true;
+    const action = likeAction(post);
+    return Boolean(action && action.acted);
+  }
+
+  function canLike(post) {
+    const action = likeAction(post);
+    return Boolean(action && action.can_act);
+  }
+
+  function likeCountOf(post) {
+    const action = likeAction(post);
+    if (action && Number.isFinite(Number(action.count))) return Number(action.count);
+    const n = Number(post && post.like_count);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  async function fetchTopic(topicId, headers, fetchFn) {
+    const f = fetchFn || fetch;
+    const res = await f("/t/" + topicId + ".json", { credentials: "same-origin", headers: headers || {} });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, data };
+  }
+
+  async function postLike(postId, headers, fetchFn) {
+    const f = fetchFn || fetch;
+    const res = await f("/post_actions.json", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { ...(headers || {}), "Content-Type": "application/json" },
+      body: JSON.stringify({ id: postId, post_action_type_id: 2 }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { status: res.status, data };
+  }
+
+  function likeOk(status) {
+    return Number(status) >= 200 && Number(status) < 300;
+  }
+
   function loggedIn(rootEl) {
     const doc = rootEl || (typeof document !== "undefined" ? document : null);
     if (!doc || typeof doc.querySelector !== "function") return false;
@@ -72,7 +139,25 @@
     );
   }
 
-  const api = { DEFAULTS, clampNum, isList, isTopic, topicId, likeCount, loggedIn };
+  const api = {
+    DEFAULTS,
+    clampNum,
+    isList,
+    isTopic,
+    topicId,
+    likeCount,
+    loggedIn,
+    csrfFromDoc,
+    jsonHeaders,
+    firstPost,
+    likeAction,
+    alreadyLiked,
+    canLike,
+    likeCountOf,
+    fetchTopic,
+    postLike,
+    likeOk,
+  };
   root.UsLinuxdo = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
