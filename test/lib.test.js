@@ -111,6 +111,51 @@ test("linux.do path helpers and defaults", () => {
   assert.equal(linuxdo.loggedIn({ querySelector: () => null }), false);
 });
 
+test("linux.do like uses Discourse post_actions API", async () => {
+  const csrf = linuxdo.csrfFromDoc({
+    querySelector(sel) {
+      return sel.includes("csrf-token") ? { getAttribute: () => "tok" } : null;
+    },
+  });
+  assert.equal(csrf, "tok");
+  const headers = linuxdo.jsonHeaders("tok");
+  assert.equal(headers["X-CSRF-Token"], "tok");
+  const post = {
+    id: 42,
+    like_count: 3,
+    current_user_reaction: null,
+    actions_summary: [{ id: 2, count: 3, can_act: true }],
+  };
+  assert.equal(linuxdo.firstPost({ post_stream: { posts: [post] } }).id, 42);
+  assert.equal(linuxdo.canLike(post), true);
+  assert.equal(linuxdo.alreadyLiked(post), false);
+  assert.equal(linuxdo.likeCountOf(post), 3);
+  assert.equal(linuxdo.alreadyLiked({ ...post, current_user_reaction: { id: "heart" } }), true);
+  assert.equal(linuxdo.canLike({ actions_summary: [{ id: 2, can_act: false }] }), false);
+  const calls = [];
+  const fetchFn = async (url, opts) => {
+    calls.push({ url, method: (opts && opts.method) || "GET", body: opts && opts.body });
+    return { status: 200, json: async () => ({ id: 42 }) };
+  };
+  const topic = await linuxdo.fetchTopic("99", headers, fetchFn);
+  assert.equal(topic.status, 200);
+  assert.equal(calls[0].url, "/t/99.json");
+  const liked = await linuxdo.postLike(42, headers, fetchFn);
+  assert.equal(liked.status, 200);
+  assert.equal(calls[1].url, "/post_actions.json");
+  assert.equal(calls[1].method, "POST");
+  assert.equal(JSON.parse(calls[1].body).post_action_type_id, 2);
+  assert.equal(JSON.parse(calls[1].body).id, 42);
+  assert.equal(linuxdo.likeOk(200), true);
+  assert.equal(linuxdo.likeOk(403), false);
+  const content = fs.readFileSync(path.join(__dirname, "..", "extension", "content", "linuxdo.js"), "utf8");
+  assert.match(content, /postLike/);
+  assert.equal(content.includes("btn.click()"), false);
+  assert.equal(content.includes("likeButton"), false);
+  const bg = fs.readFileSync(path.join(__dirname, "..", "extension", "background.js"), "utf8");
+  assert.match(bg, /onInstalled[\s\S]*healSchedule/);
+});
+
 test("nodeseek login and already-checked", () => {
   const doc = {
     querySelector(sel) {

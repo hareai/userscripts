@@ -524,12 +524,12 @@ function senderHost(sender) {
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  planTodayAlarms();
+  healSchedule();
   drainNotifyQueue();
   healLock();
 });
 chrome.runtime.onStartup.addListener(() => {
-  planTodayAlarms();
+  healSchedule();
   drainNotifyQueue();
   healLock();
 });
